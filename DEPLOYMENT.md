@@ -5,8 +5,8 @@ they don't.
 
 ## The setup
 
-- **Frontend** (`web/`, Next.js): deployed on Vercel, project `merit-ai`
-  under the `andre-chuabios-projects` team. Connected to this GitHub repo
+- **Frontend** (`web/`, Next.js): deployed on Vercel, project `<your-project>`
+  under the `<your-team>` team. Connected to this GitHub repo
   (`AndreChuabio/MeritAI`) via Vercel's native GitHub integration.
 - **Backend** (`backend/`, FastAPI): deployed separately on Railway
   (`paperpilot-api-production.up.railway.app`), not covered by this doc.
@@ -27,10 +27,10 @@ they don't.
 Vercel's GitHub integration is supposed to auto-build a preview deployment
 for **every push to every branch**, no extra config needed — that's the
 default. If pushes to your branch aren't showing up in
-`vercel.com/andre-chuabios-projects/merit-ai` → Deployments, the GitHub
+`vercel.com/<your-team>/<your-project>` → Deployments, the GitHub
 connection has silently dropped. Fix:
 
-1. Vercel dashboard → `merit-ai` project → **Settings → Git**.
+1. Vercel dashboard → `<your-project>` project → **Settings → Git**.
 2. Under "Connected Git Repository," disconnect and reconnect
    `AndreChuabio/MeritAI`. This re-establishes the webhook.
 3. Push a new commit (a re-push of an existing commit does **not** retrigger
@@ -46,7 +46,7 @@ deploy` from a CLI or an ad-hoc file upload will not have those.
 work — it always has a stable alias:
 
 ```
-https://merit-ai-git-develop-andre-chuabios-projects.vercel.app
+https://<your-project>-git-develop-<your-team>.vercel.app
 ```
 
 Push to `develop` (or merge into it) and that same URL updates automatically
@@ -84,8 +84,8 @@ testing. Add these to Supabase dashboard → **Authentication → URL
 Configuration → Redirect URLs**:
 
 ```
-https://merit-ai-git-develop-andre-chuabios-projects.vercel.app/**
-https://merit-ai-git-*-andre-chuabios-projects.vercel.app/**   # every branch preview
+https://<your-project>-git-develop-<your-team>.vercel.app/**
+https://<your-project>-git-*-<your-team>.vercel.app/**   # every branch preview
 https://<your-production-domain>/**
 ```
 
