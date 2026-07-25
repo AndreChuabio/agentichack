@@ -15,7 +15,7 @@ export default function CfpPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [format, setFormat] = useState("all");
-  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("all");
+  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("upcoming");
 
   useEffect(() => {
     let cancelled = false;
