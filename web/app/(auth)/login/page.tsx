@@ -11,7 +11,15 @@ import { Card, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 
 function isSafeRedirect(path: string | null): path is string {
-  return Boolean(path) && path!.startsWith("/") && !path!.startsWith("//");
+  // Same-origin relative paths only: must start with a single "/". Reject
+  // protocol-relative "//host" and backslash forms like "/\host" that browsers
+  // normalise to "//host" and would otherwise redirect off-site.
+  return (
+    typeof path === "string" &&
+    path.startsWith("/") &&
+    !path.startsWith("//") &&
+    !path.includes("\\")
+  );
 }
 
 function LoginForm() {

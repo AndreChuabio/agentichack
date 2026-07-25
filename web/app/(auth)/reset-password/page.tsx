@@ -1,17 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 
-export default function ResetPasswordPage() {
+// How long to wait for a recovery session before treating the link as dead, so
+// an expired / invalid / wrong-device link shows an error instead of spinning
+// forever.
+const VERIFY_TIMEOUT_MS = 8000;
+
+type Phase = "verifying" | "ready" | "invalid";
+
+function ResetPasswordForm() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const searchParams = useSearchParams();
+  // Read the recovery signals at render time. When the server confirm route
+  // bounced back an error, the page starts in "invalid" without a synchronous
+  // setState inside the effect (which React discourages).
+  const hasLinkError = searchParams.get("error") !== null;
+  const isVerified = searchParams.get("verified") === "1";
+  const [phase, setPhase] = useState<Phase>(
+    hasLinkError ? "invalid" : "verifying",
+  );
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,25 +34,49 @@ export default function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    // The server /auth/confirm route verifies the emailed token and redirects
+    // back here with ?verified=1 (session already in cookies) or ?error on
+    // failure. As a fallback, a client-exchanged PKCE link fires
+    // PASSWORD_RECOVERY. We unlock the form only for one of those recovery
+    // signals -- never merely because some other session already exists, so a
+    // logged-in visitor cannot land here and overwrite the wrong account.
+    if (hasLinkError) return;
+
     const supabase = createClient();
-    // Clicking the emailed reset link redirects here with a recovery token in
-    // the URL; supabase-js exchanges it for a session client-side and fires
-    // this event once that's done.
+    let settled = false;
+    const ready = () => {
+      if (!settled) {
+        settled = true;
+        setPhase("ready");
+      }
+    };
+    const invalid = () => {
+      if (!settled) {
+        settled = true;
+        setPhase("invalid");
+      }
+    };
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") {
-        setReady(true);
-      }
+      if (event === "PASSWORD_RECOVERY") ready();
     });
 
-    // Covers the case where the event already fired before this mounted.
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setReady(true);
-    });
+    if (isVerified) {
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) ready();
+        else invalid();
+      });
+    }
 
-    return () => subscription.unsubscribe();
-  }, []);
+    const timer = setTimeout(invalid, VERIFY_TIMEOUT_MS);
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [hasLinkError, isVerified]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,16 +93,19 @@ export default function ResetPasswordPage() {
 
     setSubmitting(true);
     const supabase = createClient();
-    const { error: updateError } = await supabase.auth.updateUser({
-      password,
-    });
-    setSubmitting(false);
+    const { error: updateError } = await supabase.auth.updateUser({ password });
 
     if (updateError) {
+      setSubmitting(false);
       setError(updateError.message);
       return;
     }
 
+    // Revoke every session (including any an attacker may hold from a leaked
+    // token) and clear this recovery session, so the reset is a clean cutover
+    // and the user signs in fresh with the new password.
+    await supabase.auth.signOut({ scope: "global" });
+    setSubmitting(false);
     setDone(true);
   }
 
@@ -72,7 +114,7 @@ export default function ResetPasswordPage() {
       <Card>
         <CardTitle>Password updated</CardTitle>
         <CardDescription>
-          Your password has been changed. You can now sign in with it.
+          Your password has been changed. Sign in with it to continue.
         </CardDescription>
         <Button
           size="lg"
@@ -85,14 +127,30 @@ export default function ResetPasswordPage() {
     );
   }
 
-  if (!ready) {
+  if (phase === "invalid") {
+    return (
+      <Card>
+        <CardTitle>This reset link is invalid or expired</CardTitle>
+        <CardDescription>
+          Password reset links can only be used once and expire after a short
+          time. Request a new one to continue.
+        </CardDescription>
+        <Button
+          size="lg"
+          className="mt-6 w-full"
+          onClick={() => router.replace("/forgot-password")}
+        >
+          Request a new link
+        </Button>
+      </Card>
+    );
+  }
+
+  if (phase === "verifying") {
     return (
       <Card>
         <CardTitle>Verifying your reset link</CardTitle>
-        <CardDescription>
-          This will only take a moment. If nothing happens, your link may
-          have expired -- request a new one from the sign in page.
-        </CardDescription>
+        <CardDescription>This will only take a moment.</CardDescription>
         <div className="mt-6 flex justify-center">
           <Spinner />
         </div>
@@ -147,5 +205,19 @@ export default function ResetPasswordPage() {
         </Button>
       </form>
     </Card>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      }
+    >
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

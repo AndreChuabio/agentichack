@@ -23,13 +23,19 @@ export default function ForgotPasswordPage() {
     const supabase = createClient();
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email.trim(),
-      { redirectTo: `${window.location.origin}/reset-password` },
+      {
+        redirectTo: `${window.location.origin}/auth/confirm?next=/reset-password`,
+      },
     );
 
     setSubmitting(false);
 
     if (resetError) {
-      setError(resetError.message);
+      // Keep the response uniform: never surface the raw provider error (it can
+      // differ by rate-limit state) and never confirm whether an account exists.
+      setError(
+        "We could not send a reset email right now. Please try again in a moment.",
+      );
       return;
     }
 
