@@ -24,6 +24,8 @@ const PUBLIC_PAGES: Array<{ path: string; expectText: string | RegExp }> = [
   { path: "/login", expectText: "Welcome back" },
   { path: "/signup", expectText: "Create your account" },
   { path: "/privacy", expectText: /privacy/i },
+  { path: "/forgot-password", expectText: "Reset your password" },
+  { path: "/reset-password", expectText: "Verifying your reset link" },
 ];
 
 for (const { path, expectText } of PUBLIC_PAGES) {

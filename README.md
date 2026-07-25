@@ -166,6 +166,24 @@ If the env var is unset, empty, or invalid JSON, the module fails closed and gra
 
 The auth shim is intentionally minimal and is a swap-in target for Clerk on Vercel Marketplace when the user count grows past two.
 
+### Web app auth (Next.js, `web/`)
+
+The `web/` frontend uses real Supabase Auth (email + password), not the passcode shim above. Relevant routes, all under `web/app/(auth)/`:
+
+- `/login`, `/signup` -- standard sign in / sign up.
+- `/forgot-password` -- collects an email and calls `supabase.auth.resetPasswordForEmail`. Always shows the same "check your email" confirmation regardless of whether the account exists, to avoid leaking which emails are registered.
+- `/reset-password` -- the page the emailed recovery link lands on. supabase-js exchanges the link's token for a session client-side (listened for via `onAuthStateChange`); once that resolves, the user sets a new password via `supabase.auth.updateUser`.
+
+**Redirect URL allowlist (read this before testing password reset on a new environment).** `resetPasswordForEmail` is called with `redirectTo: ${window.location.origin}/reset-password`, but Supabase silently ignores any `redirectTo` that isn't on the project's allowlist and falls back to the configured Site URL instead (commonly `localhost:3000` left over from local dev) -- the emailed link will send you to your laptop instead of the deployment you tested from. Fix it in the Supabase dashboard -> **Authentication -> URL Configuration -> Redirect URLs**, and add:
+
+```
+https://merit-ai-git-develop-andre-chuabios-projects.vercel.app/**
+https://merit-ai-git-*-andre-chuabios-projects.vercel.app/**   # every branch preview
+https://<your-production-domain>/**
+```
+
+See `DEPLOYMENT.md` for the branch-preview URL scheme these patterns match.
+
 ---
 
 ## Migrations
