@@ -30,7 +30,7 @@ const PILLARS: ReadonlyArray<{
     tone: "lime",
     title: "Your O-1A evidence ledger",
     description:
-      "Declare evidence across all eight criteria, see X of 8 satisfied at a glance, draft a petition-quality narrative for each, and export an attorney-ready dossier.",
+      "Declare evidence across all eight criteria, see your coverage at a glance, draft a petition-quality narrative for each, and export an attorney-ready dossier.",
     builds: "Builds: every criterion",
   },
   {
