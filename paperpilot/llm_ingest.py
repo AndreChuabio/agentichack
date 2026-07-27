@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from paperpilot import trace
+from paperpilot import trace, vertex
 from paperpilot.github_ingest import RepoBundle, render_bundle
 from paperpilot.gateway import DEFAULTS, get_client
 
@@ -63,39 +63,64 @@ def summarize_repo(bundle: RepoBundle, session_id: str) -> ResearchSummary:
         repo_tokens=bundle.total_tokens,
         model=model,
     ) as ctx:
-        client = get_client()
-        # Note: Gemini through the Vercel AI Gateway rejects the OpenAI-style
-        # response_format=json_object. The system prompt + defensive regex
-        # extraction below handle JSON extraction without that hint.
-        #
-        # Gemini 2.5 Flash is a reasoning model -- it spends most of its
-        # output budget on internal reasoning tokens. Allow generous headroom
-        # so the ~1500-token JSON we want isn't cut off mid-string.
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": rendered},
-            ],
-            max_tokens=8000,
-            temperature=0.2,
-        )
-        raw = completion.choices[0].message.content or "{}"
-        ctx["finish_reason"] = completion.choices[0].finish_reason
-        if completion.usage:
-            ctx["tokens_in"] = completion.usage.prompt_tokens
-            ctx["tokens_out"] = completion.usage.completion_tokens
-            gw_cost = getattr(completion.usage, "cost", None)
-            if gw_cost is not None:
-                ctx["cost_usd"] = gw_cost
-                ctx["cost_source"] = "gateway"
-            else:
-                # Lazy import: draft.py owns the price table.
-                from paperpilot.draft import _estimate_cost
-                ctx["cost_usd"] = _estimate_cost(
-                    model, ctx["tokens_in"], ctx["tokens_out"]
-                )
-                ctx["cost_source"] = "estimated"
+        # Gemini 2.5 Flash is a reasoning model -- it spends most of its output
+        # budget on internal reasoning tokens. Allow generous headroom so the
+        # ~1500-token JSON we want isn't cut off mid-string.
+        if vertex.vertex_enabled():
+            # First-party Gemini on Vertex AI (a Google Cloud product + the
+            # Gemini API). Vertex honors native JSON mode, so we ask for it
+            # directly rather than leaning on the regex fallback below.
+            ctx["provider"] = "vertex"
+            result = vertex.generate_json(
+                model,
+                SYSTEM_PROMPT,
+                rendered,
+                max_output_tokens=8000,
+                temperature=0.2,
+            )
+            raw = result.text or "{}"
+            ctx["finish_reason"] = result.finish_reason
+            ctx["tokens_in"] = result.tokens_in
+            ctx["tokens_out"] = result.tokens_out
+            # Lazy import: draft.py owns the price table.
+            from paperpilot.draft import _estimate_cost
+
+            ctx["cost_usd"] = _estimate_cost(
+                model, result.tokens_in, result.tokens_out
+            )
+            ctx["cost_source"] = "estimated"
+        else:
+            # Fallback: Gemini through the Vercel AI Gateway. It rejects the
+            # OpenAI-style response_format=json_object, so the system prompt +
+            # the defensive regex extraction below handle JSON without it.
+            ctx["provider"] = "gateway"
+            client = get_client()
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": rendered},
+                ],
+                max_tokens=8000,
+                temperature=0.2,
+            )
+            raw = completion.choices[0].message.content or "{}"
+            ctx["finish_reason"] = completion.choices[0].finish_reason
+            if completion.usage:
+                ctx["tokens_in"] = completion.usage.prompt_tokens
+                ctx["tokens_out"] = completion.usage.completion_tokens
+                gw_cost = getattr(completion.usage, "cost", None)
+                if gw_cost is not None:
+                    ctx["cost_usd"] = gw_cost
+                    ctx["cost_source"] = "gateway"
+                else:
+                    # Lazy import: draft.py owns the price table.
+                    from paperpilot.draft import _estimate_cost
+
+                    ctx["cost_usd"] = _estimate_cost(
+                        model, ctx["tokens_in"], ctx["tokens_out"]
+                    )
+                    ctx["cost_source"] = "estimated"
         try:
             parsed: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError:

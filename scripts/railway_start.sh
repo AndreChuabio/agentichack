@@ -7,6 +7,14 @@
 # sets SERVICE_KIND=api.
 set -euo pipefail
 
+# First-party Gemini on Vertex AI needs Google Application Default Credentials.
+# In prod the service-account JSON is supplied as GOOGLE_APPLICATION_CREDENTIALS_JSON
+# (a Railway secret); materialize it to a file and point ADC at it. No-op if unset.
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+  printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcp-sa.json
+  export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+fi
+
 if [ "${SERVICE_KIND:-streamlit}" = "api" ]; then
   exec uv run uvicorn backend.main:app --host 0.0.0.0 --port "${PORT:-8000}"
 fi
