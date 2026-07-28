@@ -11,6 +11,7 @@ the endpoints return 503 rather than 500, so the app runs unconfigured.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -120,14 +121,18 @@ async def stripe_webhook(request: Request) -> dict:
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
     try:
-        event = stripe.Webhook.construct_event(payload, sig, _STRIPE_WEBHOOK_SECRET)
+        stripe.Webhook.construct_event(payload, sig, _STRIPE_WEBHOOK_SECRET)
     except Exception as exc:  # noqa: BLE001 -- bad signature or malformed payload
         logger.warning("stripe webhook verification failed")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature."
         ) from exc
 
-    if event["type"] == "checkout.session.completed":
+    # Signature is verified above. Read fields from the raw JSON as plain dicts --
+    # in this stripe-python version the parsed StripeObject's __getattr__ shadows
+    # .get(), so calling .get() on it raises AttributeError.
+    event = json.loads(payload)
+    if event.get("type") == "checkout.session.completed":
         session = event["data"]["object"]
         if session.get("payment_status") == "paid":
             updated = supabase_client.mark_purchase_paid(
