@@ -18,6 +18,7 @@ from backend.byok import RequireLLMKey
 from backend.routers import (
     account,
     assist,
+    billing,
     cfp,
     draft,
     evidence,
@@ -67,6 +68,7 @@ app.include_router(market.router)
 app.include_router(assist.router)
 app.include_router(cfp.router)
 app.include_router(account.router)
+app.include_router(billing.router)
 
 
 class HealthResponse(BaseModel):

@@ -63,6 +63,9 @@ export default function TrackPage() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [entitled, setEntitled] = useState<boolean | null>(null);
+  const [checkingOut, setCheckingOut] = useState(false);
+  const [purchaseNote, setPurchaseNote] = useState<string | null>(null);
 
   // Read the dismissed flag from localStorage in an SSR-safe way: the server
   // snapshot is always "dismissed" so the card never flashes during hydration,
@@ -162,6 +165,45 @@ export default function TrackPage() {
     } finally {
       setDownloading(false);
     }
+  }, []);
+
+  const handleUnlock = useCallback(async () => {
+    setCheckingOut(true);
+    setDownloadError(null);
+    try {
+      const { url } = await api.billing.checkout();
+      window.location.href = url;
+    } catch (e) {
+      setDownloadError((e as Error).message);
+      setCheckingOut(false);
+    }
+  }, []);
+
+  // Load the dossier entitlement. After a Stripe return (?purchased=dossier) the
+  // webhook may lag, so poll a few times before giving up.
+  useEffect(() => {
+    let cancelled = false;
+    const justPurchased =
+      new URLSearchParams(window.location.search).get("purchased") === "dossier";
+
+    async function load(attempt: number): Promise<void> {
+      try {
+        const { entitled: paid } = await api.billing.entitlement("dossier");
+        if (cancelled) return;
+        setEntitled(paid);
+        if (justPurchased && paid) {
+          setPurchaseNote("Payment received -- your full dossier is unlocked.");
+        } else if (justPurchased && !paid && attempt < 5) {
+          setTimeout(() => void load(attempt + 1), 2000);
+        }
+      } catch {
+        if (!cancelled) setEntitled(false);
+      }
+    }
+    void load(0);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const criteria: LiveCriterionGroup[] = useMemo(
@@ -340,25 +382,51 @@ export default function TrackPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <Button
-                variant="secondary"
-                onClick={handleDossier}
-                disabled={downloading || !hasAnyEvidence}
-              >
-                {downloading ? (
-                  <>
-                    <Spinner size={16} /> Preparing dossier
-                  </>
-                ) : (
-                  "Download dossier (PDF)"
-                )}
-              </Button>
+              {entitled === false ? (
+                <Button
+                  variant="primary"
+                  onClick={handleUnlock}
+                  disabled={checkingOut || !hasAnyEvidence}
+                >
+                  {checkingOut ? (
+                    <>
+                      <Spinner size={16} /> Redirecting to checkout
+                    </>
+                  ) : (
+                    "Unlock full dossier ($99)"
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  onClick={handleDossier}
+                  disabled={downloading || !hasAnyEvidence || entitled === null}
+                >
+                  {downloading ? (
+                    <>
+                      <Spinner size={16} /> Preparing dossier
+                    </>
+                  ) : (
+                    "Download dossier (PDF)"
+                  )}
+                </Button>
+              )}
               {!hasAnyEvidence ? (
                 <span className="text-xs text-muted">
                   Add at least one piece of evidence to enable the export.
                 </span>
+              ) : entitled === false ? (
+                <span className="text-xs text-muted">
+                  One-time unlock. Your evidence and per-criterion narratives stay
+                  free.
+                </span>
               ) : null}
             </div>
+            {purchaseNote ? (
+              <p className="rounded-2xl bg-success/10 px-4 py-2.5 text-sm text-success">
+                {purchaseNote}
+              </p>
+            ) : null}
             {downloadError ? (
               <p className="rounded-2xl bg-danger/10 px-4 py-2.5 text-sm text-danger">
                 {downloadError}

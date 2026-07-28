@@ -457,6 +457,23 @@ export const api = {
     return response.blob();
   },
 
+  billing: {
+    /** Whether the caller has paid for `product` (default the dossier). */
+    async entitlement(
+      product = "dossier",
+    ): Promise<{ product: string; entitled: boolean }> {
+      return requestJson<{ product: string; entitled: boolean }>(
+        `/billing/entitlement?product=${encodeURIComponent(product)}`,
+      );
+    },
+    /** Start a Stripe Checkout session; returns the URL to redirect the user to. */
+    async checkout(): Promise<{ url: string }> {
+      return requestJson<{ url: string }>("/billing/checkout", {
+        method: "POST",
+      });
+    },
+  },
+
   market: {
     async getProfile(): Promise<Profile> {
       return requestJson<Profile>("/market/profile");
