@@ -480,6 +480,83 @@ def upsert_arxiv(
 
 
 # ---------------------------------------------------------------------------
+# Purchases / entitlements (Stripe)
+# ---------------------------------------------------------------------------
+
+def record_pending_purchase(
+    user_id: str,
+    product: str,
+    stripe_session_id: str,
+    amount_cents: int,
+    currency: str = "usd",
+    conn: psycopg.Connection | None = None,
+) -> None:
+    """Insert a pending purchase row for a started Stripe Checkout session.
+
+    Idempotent on stripe_session_id: a retried checkout for the same session is a
+    no-op rather than a duplicate row.
+    """
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO purchases "
+            "(user_id, product, status, amount_cents, currency, stripe_session_id) "
+            "VALUES (%s, %s, 'pending', %s, %s, %s) "
+            "ON CONFLICT (stripe_session_id) DO NOTHING",
+            (user_id, product, amount_cents, currency, stripe_session_id),
+        )
+    finally:
+        if owns:
+            conn.close()
+
+
+def mark_purchase_paid(
+    stripe_session_id: str,
+    stripe_payment_intent: str | None = None,
+    conn: psycopg.Connection | None = None,
+) -> bool:
+    """Mark a purchase paid from a verified Stripe webhook.
+
+    Returns True only when a row moved from not-paid to paid, so a duplicate
+    webhook delivery is a no-op.
+    """
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE purchases "
+            "SET status='paid', stripe_payment_intent=%s, updated_at=now() "
+            "WHERE stripe_session_id=%s AND status <> 'paid'",
+            (stripe_payment_intent, stripe_session_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        if owns:
+            conn.close()
+
+
+def has_paid_product(
+    user_id: str,
+    product: str,
+    conn: psycopg.Connection | None = None,
+) -> bool:
+    """True when the user has at least one paid purchase of ``product``."""
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM purchases "
+            "WHERE user_id=%s AND product=%s AND status='paid' LIMIT 1",
+            (user_id, product),
+        ).fetchone()
+        return row is not None
+    finally:
+        if owns:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Cost and quota queries over trace_log
 # ---------------------------------------------------------------------------
 

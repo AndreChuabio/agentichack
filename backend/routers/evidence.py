@@ -23,7 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
-from backend import quotas
+from backend import entitlements, quotas
 from backend.auth import AuthUser, CurrentUser
 from backend.services import evidence_service
 from paperpilot.outreach.evidence import USCIS_O1A_CRITERIA, EvidenceItem
@@ -235,6 +235,11 @@ def build_dossier(
 ) -> Response:
     """Build the O-1A evidence dossier PDF and return it as application/pdf."""
     quotas.enforce(user.id, quotas.DOSSIER)
+    if not entitlements.has_entitlement(user.id, entitlements.DOSSIER):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Unlock the full dossier to download it.",
+        )
     session_id = req.session_id if req else None
     try:
         pdf_bytes = evidence_service.build_dossier(user.id, session_id=session_id)
