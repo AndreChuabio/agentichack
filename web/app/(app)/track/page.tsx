@@ -249,7 +249,7 @@ export default function TrackPage() {
           The O-1A visa is for people with extraordinary ability. To qualify you
           need to show strong evidence in at least {REQUIRED_TO_QUALIFY} of 8
           areas. Add what you have under each area below, and we will help you
-          turn it into a petition-ready dossier.
+          turn it into an attorney-ready dossier.
         </p>
       </header>
 
@@ -377,8 +377,8 @@ export default function TrackPage() {
               </h2>
               <p className="max-w-2xl text-sm leading-relaxed text-muted">
                 When you have evidence in place, download a single PDF that
-                organizes everything by criterion, ready to share with a lawyer
-                or attach to your petition.
+                organizes everything by criterion, ready to hand to your
+                immigration attorney for review.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
