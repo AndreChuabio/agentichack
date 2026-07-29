@@ -43,6 +43,9 @@ submission/*.out
 
 # Claude / harness
 .claude/settings.local.json
+.claude/
+.agents/
+skills-lock.json
 
 # Local rollback safety nets (kept in working tree, never committed)
 *-backup
