@@ -73,6 +73,29 @@ without specifying `rootDirectory`, which appears to reset the project's
 persisted setting as a side effect). If you're deploying manually outside
 the normal git-push flow, always pin the root directory explicitly.
 
+## Backend: Vertex AI (Gemini) in production
+
+Merit-dime surfaces (repo ingest, the help assistant) run first-party
+Gemini on Vertex AI -- a Google Cloud product -- instead of proxying
+through the Vercel AI Gateway, but only when `VERTEX_PROJECT` is set. It
+being *supported* in code is not the same as it being *on*: the Railway
+backend service (`SERVICE_KIND=api`) needs these variables set in its
+Railway environment for the deployed app to actually route through Vertex:
+
+- `VERTEX_PROJECT` -- the GCP project id.
+- `VERTEX_LOCATION` -- defaults to `us-central1` if unset.
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON` -- the service-account JSON
+  contents, pasted in as a Railway secret. `scripts/railway_start.sh`
+  writes it to `/tmp/gcp-sa.json` and points
+  `GOOGLE_APPLICATION_CREDENTIALS` at it before the app starts; without
+  this variable the app boots fine but silently falls back to the Gateway
+  path (BYOK surfaces are unaffected either way -- see `.env.example`).
+
+Per-call token usage is written to the `gemini_usage` Supabase table
+(`supabase/migrations/*_gemini_usage.sql`) and to structured log lines --
+check either to confirm Vertex is actually being hit in a given
+environment, rather than just configured.
+
 ## Supabase Auth redirect URLs
 
 Any Supabase Auth flow that redirects back into the app (password reset via

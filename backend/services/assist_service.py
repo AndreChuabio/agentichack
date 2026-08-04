@@ -1,9 +1,15 @@
-"""Assist service: stream an O-1A coaching answer via the AI Gateway.
+"""Assist service: stream an O-1A coaching answer, Vertex-first.
 
 Backs the global "Help me" assistant. Given a plain-English question, the
 surface the user is on (track / productize / market), and an optional context
 dict (current path, counts, etc.), this streams a coaching answer token by
-token through the Vercel AI Gateway using the shared draft model.
+token.
+
+The help assistant runs on Merit's own key (backend/quotas.py), which makes
+it a Merit-dime surface: when paperpilot.vertex.vertex_enabled() is true it
+streams first-party Gemini on Vertex AI; otherwise it falls back to Claude
+through the Vercel AI Gateway, unchanged from before Vertex support existed.
+Either path records token usage against surface="assist".
 
 The system prompt teaches the model what Merit is, the three surfaces, the
 eight O-1A criteria in plain English, and the key rule that only three of the
@@ -19,7 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any, Generator
 
-from paperpilot import trace
+from paperpilot import trace, vertex
 from paperpilot.gateway import DEFAULTS, get_client
 from paperpilot.outreach.evidence import USCIS_O1A_CRITERIA
 
@@ -103,35 +109,55 @@ def assist_answer(
 ) -> Generator[str, None, None]:
     """Stream a coaching answer to the user's question as text deltas.
 
-    The blocking Gateway stream is iterated synchronously; the router drives
-    this generator off the event loop with iterate_in_threadpool and wraps
-    each delta as an SSE message.
+    Routes through Vertex AI when enabled, otherwise the Gateway (see module
+    docstring). Either blocking stream is iterated synchronously; the router
+    drives this generator off the event loop with iterate_in_threadpool and
+    wraps each delta as an SSE message.
     """
     surface = _normalize_surface(surface)
     user_prompt = f"{question.strip()}\n\n{_context_line(surface, context)}"
-    model = DEFAULTS["draft"]
 
     with trace.step(
         session_id,
         "assist",
-        model=model,
         surface=surface,
     ) as ctx:
-        client = get_client()
-        stream = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYS},
-                {"role": "user", "content": user_prompt},
-            ],
-            stream=True,
-            max_tokens=700,
-            temperature=0.4,
-        )
         chunks: list[str] = []
-        for event in stream:
-            delta = event.choices[0].delta.content if event.choices else None
-            if delta:
+        if vertex.vertex_enabled():
+            # Merit-dime surface: first-party Gemini on Vertex AI (a Google
+            # Cloud product + the Gemini API), same pattern as repo ingest.
+            model = DEFAULTS["assist_vertex"]
+            ctx["provider"] = "vertex"
+            ctx["model"] = model
+            for delta in vertex.generate_text_stream(
+                model,
+                SYS,
+                user_prompt,
+                surface="assist",
+                tenant_id=trace.session_user(session_id) or None,
+                max_output_tokens=700,
+                temperature=0.4,
+            ):
                 chunks.append(delta)
                 yield delta
+        else:
+            model = DEFAULTS["draft"]
+            ctx["provider"] = "gateway"
+            ctx["model"] = model
+            client = get_client()
+            stream = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYS},
+                    {"role": "user", "content": user_prompt},
+                ],
+                stream=True,
+                max_tokens=700,
+                temperature=0.4,
+            )
+            for event in stream:
+                delta = event.choices[0].delta.content if event.choices else None
+                if delta:
+                    chunks.append(delta)
+                    yield delta
         ctx["chars"] = len("".join(chunks))

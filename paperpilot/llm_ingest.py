@@ -75,6 +75,8 @@ def summarize_repo(bundle: RepoBundle, session_id: str) -> ResearchSummary:
                 model,
                 SYSTEM_PROMPT,
                 rendered,
+                surface="ingest",
+                tenant_id=trace.session_user(session_id) or None,
                 max_output_tokens=8000,
                 temperature=0.2,
             )
