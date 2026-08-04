@@ -41,6 +41,10 @@ npm run dev
 Both surfaces import from `paperpilot/`. Put pipeline logic there, not in a
 route handler or a Streamlit page, so it stays shared.
 
+## Autonomous tickets
+
+This repo uses an executor bot: any issue labelled `queued` is picked up automatically on the team's always-on machine, worked on a feature branch, and returned as a draft PR labelled `needs-review`. No manual PR creation needed — label the issue and it flows through the pipeline.
+
 ## Before opening a PR
 
 1. `make test` must pass. Add or update tests for any behavior change --
