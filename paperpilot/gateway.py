@@ -69,4 +69,7 @@ DEFAULTS = {
     "ingest": os.environ.get("MODEL_INGEST", "google/gemini-2.5-flash"),
     "draft": os.environ.get("MODEL_DRAFT", "anthropic/claude-sonnet-4-6"),
     "embed": os.environ.get("MODEL_EMBED", "openai/text-embedding-3-small"),
+    # Used only when paperpilot.vertex.vertex_enabled() -- the help assistant
+    # otherwise streams "draft" (Claude) through the Gateway, unchanged.
+    "assist_vertex": os.environ.get("MODEL_ASSIST_VERTEX", "google/gemini-2.5-flash"),
 }

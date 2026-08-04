@@ -585,6 +585,34 @@ def user_cost_usd(
             conn.close()
 
 
+def record_gemini_usage(
+    surface: str,
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    tenant_id: str | None,
+    conn: psycopg.Connection | None = None,
+) -> None:
+    """Append one Gemini-on-Vertex-AI call's token usage to gemini_usage.
+
+    Called from paperpilot.vertex on every Vertex call, which already
+    treats a write failure here as best-effort and never lets it break the
+    caller's generation. tenant_id is nullable: a Vertex call outside a
+    bound session (CLI/system paths) still logs, same as trace_log.user_id.
+    """
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO gemini_usage (ts, surface, model, tokens_in, tokens_out, tenant_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (datetime.now(), surface, model, tokens_in, tokens_out, tenant_id),
+        )
+    finally:
+        if owns:
+            conn.close()
+
+
 def user_event_count(
     user_id: str,
     kind_prefix: str,
