@@ -1,0 +1,10 @@
+node_modules/
+package-lock.json
+# Stray recon-phase scratch (not part of the explorer deliverable).
+headed-walk.mjs
+live-walk-video/
+# Playwright videos/traces are large binaries regenerated on every run.
+results/artifacts/
+results/report.json
+# Money-shots (results/money-shots/) and results/action-log.jsonl are the
+# committed evidence -- force-added in the findings commit.
