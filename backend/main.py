@@ -26,6 +26,7 @@ from backend.routers import (
     ingest,
     market,
     plugin,
+    site,
 )
 from backend.venues import rank_venues
 from paperpilot import redaction, supabase_client
@@ -63,6 +64,7 @@ app.include_router(ingest.router)
 app.include_router(draft.router)
 app.include_router(export.router)
 app.include_router(plugin.router)
+app.include_router(site.router)
 app.include_router(evidence.router)
 app.include_router(market.router)
 app.include_router(assist.router)
