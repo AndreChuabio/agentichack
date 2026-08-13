@@ -14,9 +14,9 @@ interface NavLink {
 }
 
 const NAV_LINKS: NavLink[] = [
+  { href: "/market", label: "Market" },
   { href: "/productize", label: "Productize" },
   { href: "/track", label: "Track" },
-  { href: "/market", label: "Market" },
   { href: "/publish", label: "Publish" },
   { href: "/cfp", label: "Call for Papers" },
 ];
