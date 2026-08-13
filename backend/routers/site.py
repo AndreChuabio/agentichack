@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from backend import quotas
 from backend.auth import AuthUser, CurrentUser
-from backend.byok import RequireLLMKey
 from backend.entitlements import PORTFOLIO, has_entitlement
 from backend.services.market_service import get_profile
 from backend.services.publish_target import HostedTarget
@@ -70,9 +69,16 @@ class BuildSiteResponse(BaseModel):
 def build_site_endpoint(
     req: BuildSiteRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
 ) -> BuildSiteResponse:
-    """Build a portfolio site and return it zipped."""
+    """Build a portfolio site and return it zipped.
+
+    No RequireLLMKey. A surface either runs on the caller's own gateway key
+    (BYOK, uncapped) or on Merit's (capped) -- and this one is capped, by
+    quotas.SITE below. Requiring both was contradictory, and in practice fatal:
+    the web client sends no X-LLM-Key header on any request, so every call from
+    the browser would have been refused with a 400 asking for a key the UI has
+    no way to collect.
+    """
     if len(req.repo_urls) > MAX_REPOS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

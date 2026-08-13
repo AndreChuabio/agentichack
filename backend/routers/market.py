@@ -272,12 +272,16 @@ class AutofillResponse(BaseModel):
 def autofill_profile(
     body: AutofillRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
 ) -> AutofillResponse:
     """Propose profile fields from pasted links. Never writes the profile.
 
     Individual dead sources are reported inside the result, not raised -- only a
     failure of the proposal call itself reaches the ladder below.
+
+    No RequireLLMKey: this is capped by quotas.ENRICH and runs on Merit's key.
+    Demanding both a quota and a caller-supplied key was contradictory, and the
+    web client sends no X-LLM-Key header on any request, so it would have made
+    the button unreachable from the browser.
     """
     quotas.enforce(user.id, quotas.ENRICH)
     try:

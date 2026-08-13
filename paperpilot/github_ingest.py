@@ -227,9 +227,6 @@ def _owner_login(owner: str) -> str:
     return text
 
 
-def _negated(stamp: str) -> str:
-    """Sort key that puts the newest timestamp first without reversing forks."""
-    return "".join(chr(255 - ord(c)) if ord(c) < 255 else c for c in stamp)
 
 
 def list_user_repos(owner: str, limit: int = 100) -> list[RepoSummary]:
@@ -256,7 +253,14 @@ def list_user_repos(owner: str, limit: int = 100) -> list[RepoSummary]:
         )
         for repo in gh.get_user(login).get_repos()
     ]
-    summaries.sort(key=lambda r: (r.fork, _negated(r.pushed_at)))
+    # Two stable passes rather than one composite key: the date wants
+    # descending and the fork flag ascending, which a single sort cannot
+    # express. The previous attempt inverted the timestamp characters
+    # arithmetically, which also sorted a repo with no push date -- an empty
+    # string -- to the very top as though it were the newest thing the user
+    # owned. Sorting descending puts the empty ones last, where they belong.
+    summaries.sort(key=lambda r: r.pushed_at or "", reverse=True)
+    summaries.sort(key=lambda r: r.fork)
     return summaries[:limit]
 
 

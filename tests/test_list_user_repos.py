@@ -39,3 +39,19 @@ def test_limit_is_honoured():
     with patch("paperpilot.github_ingest._gh_client") as gh:
         gh.return_value.get_user.return_value.get_repos.return_value = repos
         assert len(list_user_repos("andre", limit=3)) == 3
+
+
+def test_a_repo_with_no_push_date_sorts_last_not_first():
+    """An absent timestamp is not "newest".
+
+    The first implementation inverted the timestamp characters arithmetically,
+    so an empty string sorted ahead of every real date and a repo GitHub had no
+    push date for appeared at the top of the picker as the user's latest work.
+    """
+    undated = _repo("undated", 1)
+    undated.pushed_at = None
+    repos = [undated, _repo("recent", 20), _repo("older", 2)]
+    with patch("paperpilot.github_ingest._gh_client") as gh:
+        gh.return_value.get_user.return_value.get_repos.return_value = repos
+        result = list_user_repos("andre")
+    assert [r.full_name.split("/")[1] for r in result] == ["recent", "older", "undated"]

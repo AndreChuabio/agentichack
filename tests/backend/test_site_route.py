@@ -62,6 +62,24 @@ def _authed():
         app.dependency_overrides.clear()
 
 
+@contextmanager
+def _authed_no_key():
+    """Authenticated, but with the BYOK dependency left in place.
+
+    _authed above overrides require_llm_key, which would mask a route that
+    demands an X-LLM-Key header the browser never sends. This one does not, so
+    a test using it fails if BYOK creeps back onto a Merit-key surface.
+    """
+    app.dependency_overrides[get_current_user] = lambda: AuthUser(
+        id=USER_ID, email="clown@example.com"
+    )
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_publish_site_returns_base64_zip():
     with _authed() as client, patch(
         "backend.routers.site.build_site", return_value=_result()
@@ -162,3 +180,20 @@ def test_a_github_outage_is_a_502_not_a_500():
 def test_repos_requires_auth():
     with TestClient(app) as client:
         assert client.get("/publish/repos").status_code == 401
+
+
+def test_building_a_site_does_not_demand_a_byok_header():
+    """Publish is capped by quotas.SITE and runs on Merit's key.
+
+    It briefly required BOTH a quota and an X-LLM-Key header, which is
+    contradictory -- and fatal in practice, because the web client sends that
+    header on no request at all, so every build from the browser was refused
+    with a 400 asking for a key the UI cannot collect.
+    """
+    with _authed_no_key() as client, patch(
+        "backend.routers.site.build_site", return_value=_result()
+    ):
+        response = client.post(
+            "/publish/site", json={"repo_urls": [], "evidence_ids": []}
+        )
+    assert response.status_code == 200, response.text
