@@ -35,7 +35,11 @@ from paperpilot.llm_ingest import ResearchSummary
 
 load_dotenv()
 
-app = FastAPI(title="Merit API", version="0.1.0")
+# Bumped on every deploy that changes behaviour. Reported by /health so a
+# rollout can be confirmed rather than assumed.
+BUILD = "0.3.0-publish-byok-split"
+
+app = FastAPI(title="Merit API", version=BUILD)
 
 redaction.install()
 
@@ -75,8 +79,18 @@ app.include_router(billing.router)
 
 
 class HealthResponse(BaseModel):
+    """Liveness, database reachability, and which build is answering.
+
+    ``build`` exists because a deploy that changes only behaviour -- a
+    dependency becoming optional, a cap being added -- leaves no trace in the
+    OpenAPI schema, so there was no way to tell from outside whether a rollout
+    had actually landed. Guessing at that during an incident is how a fix gets
+    redeployed three times before anyone notices it shipped the first time.
+    """
+
     status: str
     database: bool
+    build: str
 
 
 class VenueResponse(BaseModel):
@@ -113,7 +127,7 @@ def health() -> HealthResponse:
             conn.close()
     except Exception:  # noqa: BLE001 -- health must never raise
         db_ok = False
-    return HealthResponse(status="ok", database=db_ok)
+    return HealthResponse(status="ok", database=db_ok, build=BUILD)
 
 
 @app.get("/me", response_model=MeResponse)
