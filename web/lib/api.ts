@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import type {
   AssistHandlers,
   AssistSurface,
+  BuildSiteResponse,
   Cfp,
   Citation,
   DraftCard,
@@ -443,6 +444,19 @@ export const api = {
         `/evidence/${encodeURIComponent(criterion)}/narrative`,
         { method: "POST" },
       );
+    },
+  },
+
+  publish: {
+    /** Build a portfolio site from the caller's profile, repos, and chosen evidence. */
+    async buildSite(
+      repoUrls: string[],
+      evidenceIds: string[],
+    ): Promise<BuildSiteResponse> {
+      return requestJson<BuildSiteResponse>("/publish/site", {
+        method: "POST",
+        body: { repo_urls: repoUrls, evidence_ids: evidenceIds },
+      });
     },
   },
 

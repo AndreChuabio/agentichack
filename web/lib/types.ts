@@ -221,3 +221,23 @@ export interface AssistHandlers {
   onDone: () => void;
   onError: (error: string) => void;
 }
+
+/* ----- Publish: portfolio site ----- */
+
+export interface SkippedRepo {
+  repo_url: string;
+  reason: string;
+}
+
+export interface SiteTheme {
+  palette: string;
+  layout: string;
+}
+
+export interface BuildSiteResponse {
+  site_name: string;
+  theme: SiteTheme;
+  html_preview: string;
+  zip_base64: string;
+  skipped: SkippedRepo[];
+}
