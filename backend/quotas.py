@@ -37,6 +37,7 @@ class Quota:
 DOSSIER = Quota(kind_prefix="evidence_dossier", limit=3, window_days=30, noun="dossier export")
 NARRATIVE = Quota(kind_prefix="evidence_draft", limit=30, window_days=30, noun="criterion narrative")
 ASSIST = Quota(kind_prefix="assist", limit=20, window_days=1, noun="assistant question")
+SITE = Quota(kind_prefix="site_build", limit=5, window_days=30, noun="portfolio site build")
 
 
 def enforce(user_id: str, quota: Quota) -> None:
