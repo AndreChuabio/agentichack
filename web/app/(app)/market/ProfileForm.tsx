@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Profile } from "@/lib/types";
+import type { Profile, SourceStatus } from "@/lib/types";
 import { api } from "@/lib/api";
 import {
   Button,
@@ -48,6 +48,35 @@ type SaveState =
   | { kind: "saved" }
   | { kind: "error"; message: string };
 
+/**
+ * The fields autofill is allowed to propose. The backend is asked for exactly
+ * these keys, and anything else it returns is ignored rather than written into
+ * form state, so a widened prompt can never reach a field the user did not
+ * expect to see change.
+ */
+const AUTOFILL_FIELDS = ["name", "title", "about", "voice_tone"] as const;
+
+type AutofillField = (typeof AUTOFILL_FIELDS)[number];
+
+const FIELD_LABELS: Record<AutofillField, string> = {
+  name: "Name",
+  title: "Title",
+  about: "About",
+  voice_tone: "Voice and tone",
+};
+
+type AutofillState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; proposed: Record<string, string>; sources: SourceStatus[] }
+  | { kind: "error"; message: string };
+
+type ResumeState =
+  | { kind: "idle" }
+  | { kind: "reading" }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
+
 function readString(source: Profile, key: keyof MarketProfile): string {
   const value = source[key];
   return typeof value === "string" ? value : "";
@@ -89,6 +118,8 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
+  const [autofill, setAutofill] = useState<AutofillState>({ kind: "idle" });
+  const [resume, setResume] = useState<ResumeState>({ kind: "idle" });
 
   useEffect(() => {
     let active = true;
@@ -123,6 +154,74 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
     }
   }
 
+  /**
+   * Ask the backend what it can read from the pasted links.
+   *
+   * The response is held as a proposal and nothing is written into the form
+   * until the user accepts a field, because overwriting an About paragraph
+   * somebody wrote by hand is worse than not autofilling at all.
+   */
+  async function runAutofill() {
+    setAutofill({ kind: "running" });
+    try {
+      const result = await api.market.autofillProfile({
+        github_url: normalizeUrl(profile.github_url),
+        linkedin_url: normalizeUrl(profile.linkedin_url),
+        scholar_url: normalizeUrl(profile.scholar_url),
+        site_url: normalizeUrl(profile.site_url),
+      });
+      setAutofill({
+        kind: "done",
+        proposed: result.proposed,
+        sources: result.sources,
+      });
+    } catch (err: unknown) {
+      setAutofill({
+        kind: "error",
+        message:
+          err instanceof Error ? err.message : "Could not read your links.",
+      });
+    }
+  }
+
+  /** Accept one proposed field. Never assigns the proposal wholesale. */
+  function accept(key: AutofillField, value: string) {
+    update(key, value);
+    setAutofill((prev) => {
+      if (prev.kind !== "done") return prev;
+      const remaining = { ...prev.proposed };
+      delete remaining[key];
+      return { ...prev, proposed: remaining };
+    });
+  }
+
+  /**
+   * Extract text from an uploaded PDF or .docx into the resume field.
+   *
+   * The file is not stored anywhere: the backend returns the words and the
+   * user still presses Save profile, so nothing changes behind their back.
+   */
+  async function handleResume(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    setResume({ kind: "reading" });
+    try {
+      const result = await api.market.uploadResume(file);
+      update("resume_text", result.resume_text);
+      setResume({ kind: "done" });
+    } catch (err: unknown) {
+      setResume({
+        kind: "error",
+        message:
+          err instanceof Error ? err.message : "Could not read that file.",
+      });
+    } finally {
+      // Clear the input so re-picking the same file fires change again.
+      input.value = "";
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setSave({ kind: "saving" });
@@ -145,6 +244,16 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
       });
     }
   }
+
+  // Only the fields the form knows how to set, and only where the backend
+  // actually proposed something.
+  const proposals =
+    autofill.kind === "done"
+      ? AUTOFILL_FIELDS.map((key) => ({
+          key,
+          value: autofill.proposed[key] ?? "",
+        })).filter((proposal) => proposal.value.trim().length > 0)
+      : [];
 
   if (loading) {
     return (
@@ -246,6 +355,132 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
             value={profile.site_url}
             onChange={(e) => update("site_url", e.target.value)}
           />
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl bg-primary-50/60 px-4 py-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={runAutofill}
+              disabled={autofill.kind === "running"}
+            >
+              {autofill.kind === "running" ? (
+                <>
+                  <Spinner size={16} />
+                  Reading your links
+                </>
+              ) : (
+                "Autofill from my links"
+              )}
+            </Button>
+            <span className="text-sm text-muted">
+              Reads the links above and proposes values. Nothing changes until
+              you accept a field and save.
+            </span>
+          </div>
+
+          {autofill.kind === "error" ? (
+            <span className="text-sm font-medium text-danger">
+              {autofill.message}
+            </span>
+          ) : null}
+
+          {autofill.kind === "done" ? (
+            <>
+              <ul className="flex flex-col gap-1 text-sm">
+                {autofill.sources.map((source) => (
+                  <li key={source.source}>
+                    <span
+                      className={
+                        source.ok
+                          ? "font-medium text-success"
+                          : "font-medium text-danger"
+                      }
+                    >
+                      {source.source}
+                    </span>
+                    <span className="text-muted">
+                      {": "}
+                      {source.ok
+                        ? "read"
+                        : source.detail || "could not be read"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              {proposals.length === 0 ? (
+                <span className="text-sm text-muted">
+                  Nothing to propose from those links.
+                </span>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {proposals.map((proposal) => (
+                    <li
+                      key={proposal.key}
+                      className="flex flex-col gap-1 rounded-2xl bg-surface px-4 py-3"
+                    >
+                      <span className="font-display text-sm font-medium text-ink">
+                        {FIELD_LABELS[proposal.key]}
+                      </span>
+                      <span className="text-sm text-muted">
+                        Now: {profile[proposal.key] || "(empty)"}
+                      </span>
+                      <span className="text-sm text-ink">
+                        Proposed: {proposal.value}
+                      </span>
+                      <div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => accept(proposal.key, proposal.value)}
+                        >
+                          Use this
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="resume_file"
+            className="font-display text-sm font-medium text-ink"
+          >
+            Upload a resume (optional)
+          </label>
+          <input
+            id="resume_file"
+            name="resume_file"
+            type="file"
+            accept=".pdf,.docx"
+            disabled={resume.kind === "reading"}
+            onChange={handleResume}
+            className="text-sm text-ink file:mr-3 file:rounded-2xl file:border-0 file:bg-primary-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary"
+          />
+          <span className="text-xs text-muted">
+            PDF or .docx, under 5 MB. The file itself is never stored: only the
+            text below, and only once you save.
+          </span>
+          {resume.kind === "reading" ? (
+            <span className="text-sm text-muted">Reading the file</span>
+          ) : null}
+          {resume.kind === "done" ? (
+            <span className="text-sm font-medium text-success">
+              Text pulled in. Check it, then press Save profile.
+            </span>
+          ) : null}
+          {resume.kind === "error" ? (
+            <span className="text-sm font-medium text-danger">
+              {resume.message}
+            </span>
+          ) : null}
         </div>
 
         <Textarea

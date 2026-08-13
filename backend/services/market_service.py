@@ -8,9 +8,10 @@ the data layer moves; LLM/Senso logic stays in paperpilot.outreach.*.
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -35,7 +36,12 @@ _PEOPLE_QUERY: dict[str, str] = {
 _PROFILE_FIELDS = [
     "name", "title", "about", "voice_tone",
     "github_url", "linkedin_url", "scholar_url", "site_url", "resume_text",
+    "selected_repos",
 ]
+
+# Profile columns stored as jsonb rather than text, so they are serialised on
+# write and arrive already parsed on read.
+_JSON_FIELDS = frozenset({"selected_repos"})
 
 
 @dataclass
@@ -52,6 +58,7 @@ class Profile:
     scholar_url: str = ""
     site_url: str = ""
     resume_text: str = ""
+    selected_repos: list[str] = field(default_factory=list)
 
 
 class _LogAdapter:
@@ -93,7 +100,8 @@ def get_profile(user_id: str, conn: Any | None = None) -> Profile:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT name, title, about, voice_tone, github_url, "
-                "linkedin_url, scholar_url, site_url, resume_text "
+                "linkedin_url, scholar_url, site_url, resume_text, "
+                "selected_repos "
                 "FROM user_profile WHERE user_id = %s",
                 (user_id,),
             )
@@ -103,7 +111,28 @@ def get_profile(user_id: str, conn: Any | None = None) -> Profile:
             conn.close()
     if row is None:
         return Profile(user_id=user_id)
-    return Profile(user_id=user_id, **dict(zip(_PROFILE_FIELDS, row)))
+    values = dict(zip(_PROFILE_FIELDS, row))
+    # selected_repos arrives already parsed from a jsonb column. A hand-edited
+    # row could hold any JSON, so anything that is not a list of strings is
+    # read as no selection rather than being handed to the form as-is.
+    repos = values.get("selected_repos")
+    values["selected_repos"] = (
+        [str(item) for item in repos] if isinstance(repos, list) else []
+    )
+    return Profile(user_id=user_id, **values)
+
+
+def _serialise(name: str, value: Any) -> str:
+    """One profile value in the form its column takes.
+
+    A jsonb column will not accept str(["a"]): Python's repr quotes with
+    apostrophes and is not JSON, so list fields are dumped rather than
+    stringified. Everything else is plain text.
+    """
+    if name in _JSON_FIELDS:
+        items = value if isinstance(value, (list, tuple)) else []
+        return json.dumps([str(item) for item in items])
+    return str(value)
 
 
 def upsert_profile(
@@ -112,12 +141,16 @@ def upsert_profile(
     """Upsert the caller's profile row keyed on user_id.
 
     Only known profile fields are written; unknown keys are ignored. Missing
-    fields fall back to the schema default (empty string) on insert and are
-    left unchanged on update.
+    fields fall back to the schema default (empty string, or an empty array for
+    the jsonb columns) on insert and are left unchanged on update.
     """
     own_conn = conn is None
     conn = conn or supabase_client.get_conn()
-    clean = {k: str(fields[k]) for k in _PROFILE_FIELDS if fields.get(k) is not None}
+    clean = {
+        k: _serialise(k, fields[k])
+        for k in _PROFILE_FIELDS
+        if fields.get(k) is not None
+    }
     cols = ["user_id", *clean.keys(), "updated_at"]
     placeholders = ", ".join(["%s"] * len(cols))
     updates = ", ".join(

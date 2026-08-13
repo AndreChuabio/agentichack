@@ -2,7 +2,8 @@
 
 Exposes POST /publish/site: build a static portfolio site from the caller's
 profile, the repos they picked, and the evidence they explicitly chose to
-publish. Returns the site zip base64-encoded for download.
+publish. Returns the site zip base64-encoded for download. GET /publish/repos
+feeds the picker those repos read off the caller's stored GitHub handle.
 
 Gating is wired from day one but ships dark: has_entitlement returns True while
 STRIPE_PRICE_PORTFOLIO is unset, so switching the paywall on later is an env var
@@ -14,6 +15,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, ValidationError
@@ -22,7 +24,10 @@ from backend import quotas
 from backend.auth import AuthUser, CurrentUser
 from backend.byok import RequireLLMKey
 from backend.entitlements import PORTFOLIO, has_entitlement
+from backend.services.market_service import get_profile
+from backend.services.publish_target import HostedTarget
 from backend.services.site_service import build_site
+from paperpilot.github_ingest import list_user_repos
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +54,16 @@ class SkippedRepo(BaseModel):
 
 
 class BuildSiteResponse(BaseModel):
-    """The built site: name, resolved theme, preview HTML, and the zip."""
+    """The built site: name, resolved theme, preview HTML, the zip, and where
+    the hosted copy would answer once it is published."""
 
     site_name: str
     theme: dict
     html_preview: str
     zip_base64: str
     skipped: list[SkippedRepo]
+    slug: str
+    public_url: str
 
 
 @router.post("/publish/site", response_model=BuildSiteResponse)
@@ -115,4 +123,78 @@ def build_site_endpoint(
         html_preview=result.html_preview,
         zip_base64=base64.b64encode(result.zip_bytes).decode("ascii"),
         skipped=[SkippedRepo(**item) for item in result.skipped],
+        slug=result.slug,
+        public_url=result.public_url,
+    )
+
+
+class LiveUrlResponse(BaseModel):
+    """Where the published site answers."""
+
+    url: str
+
+
+@router.post("/publish/site/live", response_model=LiveUrlResponse)
+def go_live(user: AuthUser = CurrentUser) -> LiveUrlResponse:
+    """Make the caller's built site public and return its URL.
+
+    No RequireLLMKey: publishing spends no model call, it flips a flag on a
+    render the build already paid for.
+    """
+    try:
+        return LiveUrlResponse(url=HostedTarget().publish(user.id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+@router.delete("/publish/site/live", status_code=status.HTTP_204_NO_CONTENT)
+def take_down(user: AuthUser = CurrentUser) -> None:
+    """Take the caller's site down and delete the stored HTML."""
+    HostedTarget().unpublish(user.id)
+
+
+class RepoOption(BaseModel):
+    """One repo offered in the picker."""
+
+    full_name: str
+    html_url: str
+    description: str
+    language: str
+    stars: int
+    pushed_at: str
+    fork: bool
+
+
+class ReposResponse(BaseModel):
+    """The caller's repos, plus whichever they picked last time."""
+
+    repos: list[RepoOption]
+    selected: list[str]
+
+
+@router.get("/publish/repos", response_model=ReposResponse)
+def list_repos(user: AuthUser = CurrentUser) -> ReposResponse:
+    """List the caller's GitHub repos for the picker.
+
+    Reads the handle off the stored Market profile so the user does not paste
+    it twice. A profile with no GitHub URL is an empty list, not an error --
+    the picker then simply has nothing to offer.
+
+    No RequireLLMKey: listing repos spends no model call.
+    """
+    profile = get_profile(user.id)
+    if not profile.github_url.strip():
+        return ReposResponse(repos=[], selected=[])
+    try:
+        found = list_user_repos(profile.github_url)
+    except Exception as exc:  # noqa: BLE001 -- a GitHub outage is not a 500 here
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not read your GitHub repositories: {exc}",
+        ) from exc
+    return ReposResponse(
+        repos=[RepoOption(**asdict(r)) for r in found],
+        selected=list(profile.selected_repos or []),
     )

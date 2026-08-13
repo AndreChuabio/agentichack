@@ -206,6 +206,60 @@ def fetch_repo(
     )
 
 
+@dataclass(frozen=True)
+class RepoSummary:
+    """One repo as the picker shows it. Not the bundle -- just enough to choose."""
+
+    full_name: str
+    html_url: str
+    description: str
+    language: str
+    stars: int
+    pushed_at: str
+    fork: bool
+
+
+def _owner_login(owner: str) -> str:
+    """The login out of a bare handle or a full profile URL."""
+    text = owner.strip().rstrip("/")
+    if "github.com" in text:
+        return text.split("github.com/", 1)[1].split("/")[0]
+    return text
+
+
+def _negated(stamp: str) -> str:
+    """Sort key that puts the newest timestamp first without reversing forks."""
+    return "".join(chr(255 - ord(c)) if ord(c) < 255 else c for c in stamp)
+
+
+def list_user_repos(owner: str, limit: int = 100) -> list[RepoSummary]:
+    """A user's public repos, most recently pushed first and forks last.
+
+    Forks sort last rather than being dropped: a fork can be the interesting
+    work, and the user is the one picking. Accepts either a bare handle or the
+    profile URL already stored on the Market profile, so the caller does not
+    have to know which it has.
+    """
+    login = _owner_login(owner)
+    if not login:
+        raise ValueError("a GitHub owner or profile URL is required")
+    gh = _gh_client()
+    summaries = [
+        RepoSummary(
+            full_name=repo.full_name,
+            html_url=repo.html_url,
+            description=repo.description or "",
+            language=repo.language or "",
+            stars=int(repo.stargazers_count or 0),
+            pushed_at=repo.pushed_at.isoformat() if repo.pushed_at else "",
+            fork=bool(repo.fork),
+        )
+        for repo in gh.get_user(login).get_repos()
+    ]
+    summaries.sort(key=lambda r: (r.fork, _negated(r.pushed_at)))
+    return summaries[:limit]
+
+
 def render_bundle(bundle: RepoBundle) -> str:
     """Render the bundle into a single prompt-ready string."""
     parts = [

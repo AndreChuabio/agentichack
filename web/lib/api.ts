@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import type {
   AssistHandlers,
   AssistSurface,
+  AutofillResponse,
   BuildSiteResponse,
   Cfp,
   Citation,
@@ -13,12 +14,15 @@ import type {
   EvidenceLedger,
   ExportResult,
   IngestResult,
+  LiveUrlResponse,
   MeResponse,
   OutreachRow,
   PeopleResponse,
   PluginResult,
   Profile,
+  ReposResponse,
   ResearchSummary,
+  ResumeTextResponse,
   SentInput,
   Venue,
 } from "@/lib/types";
@@ -458,6 +462,28 @@ export const api = {
         body: { repo_urls: repoUrls, evidence_ids: evidenceIds },
       });
     },
+
+    /** The caller's GitHub repos for the picker, plus their last selection. */
+    async listRepos(): Promise<ReposResponse> {
+      return requestJson<ReposResponse>("/publish/repos");
+    },
+
+    /** Make the built site public. Returns the URL it now answers on. */
+    async goLive(): Promise<LiveUrlResponse> {
+      return requestJson<LiveUrlResponse>("/publish/site/live", {
+        method: "POST",
+      });
+    },
+
+    /** Take the site down and delete the stored HTML. */
+    async takeDown(): Promise<void> {
+      const response = await authedFetch("/publish/site/live", {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
+    },
   },
 
   async dossier(): Promise<Blob> {
@@ -522,6 +548,38 @@ export const api = {
         method: "POST",
         body: { purpose, context },
       });
+    },
+
+    /**
+     * Propose profile fields from the caller's pasted links.
+     * Never writes the profile: the user accepts fields one at a time.
+     */
+    async autofillProfile(urls: {
+      github_url: string;
+      linkedin_url: string;
+      scholar_url: string;
+      site_url: string;
+    }): Promise<AutofillResponse> {
+      return requestJson<AutofillResponse>("/market/profile/autofill", {
+        method: "POST",
+        body: urls,
+      });
+    },
+
+    /** Multipart, so this bypasses requestJson but still uses the shared token. */
+    async uploadResume(file: File): Promise<ResumeTextResponse> {
+      const token = await getAccessToken();
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${API_BASE_URL}/market/profile/resume`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
+      return (await response.json()) as ResumeTextResponse;
     },
 
     async logSent(input: SentInput): Promise<void> {

@@ -37,6 +37,23 @@ def _profile() -> SimpleNamespace:
     )
 
 
+class _StubTarget:
+    """A hosted target that records instead of reaching Postgres.
+
+    The build now files every render as a draft, so without this the service
+    tests would open a database connection.
+    """
+
+    def reserve_slug(self, user_id: str, name: str) -> str:
+        return "andre-chuabio"
+
+    def save_draft(self, user_id: str, slug: str, html: str) -> None:
+        return None
+
+    def public_url(self, slug: str) -> str:
+        return f"https://meritai.me/u/{slug}"
+
+
 def _patches(evidence_rows, pack=None, bundle_side_effect=None):
     pack = pack or SitePack(name="Andre Chuabio")
     return (
@@ -49,12 +66,13 @@ def _patches(evidence_rows, pack=None, bundle_side_effect=None):
             side_effect=bundle_side_effect or (lambda url: "bundle"),
         ),
         patch.object(site_service.supabase_client, "insert_artifact", return_value=None),
+        patch.object(site_service, "HostedTarget", _StubTarget),
     )
 
 
 def test_evidence_not_owned_by_caller_is_rejected():
-    p1, p2, p3, p4, p5 = _patches([_evidence("owned-1")])
-    with p1, p2, p3, p4, p5, pytest.raises(HTTPException) as exc:
+    p1, p2, p3, p4, p5, p6 = _patches([_evidence("owned-1")])
+    with p1, p2, p3, p4, p5, p6, pytest.raises(HTTPException) as exc:
         site_service.build_site(
             user_id="u1", repo_urls=[], evidence_ids=["someone-elses-id"]
         )
@@ -69,8 +87,10 @@ def test_only_requested_evidence_reaches_the_pack():
         captured.update(kwargs)
         return SitePack(name="Andre")
 
-    p1, p2, _, p4, p5 = _patches(rows)
-    with p1, p2, p4, p5, patch.object(site_service, "build_pack", side_effect=_capture):
+    p1, p2, _, p4, p5, p6 = _patches(rows)
+    with p1, p2, p4, p5, p6, patch.object(
+        site_service, "build_pack", side_effect=_capture
+    ):
         site_service.build_site(user_id="u1", repo_urls=[], evidence_ids=["a"])
     titles = [item["title"] for item in captured["evidence"]]
     assert titles == ["Kept"]
@@ -82,8 +102,8 @@ def test_unreachable_repo_is_skipped_not_fatal():
             raise RuntimeError("404 from GitHub")
         return "bundle"
 
-    p1, p2, p3, p4, p5 = _patches([], bundle_side_effect=_boom)
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = _patches([], bundle_side_effect=_boom)
+    with p1, p2, p3, p4, p5, p6:
         result = site_service.build_site(
             user_id="u1",
             repo_urls=["https://github.com/x/good", "https://github.com/x/bad"],
@@ -95,8 +115,8 @@ def test_unreachable_repo_is_skipped_not_fatal():
 
 
 def test_single_repo_with_session_reuses_the_cached_bundle():
-    p1, p2, p3, p4, p5 = _patches([])
-    with p1, p2, p3, p4, p5, patch.object(
+    p1, p2, p3, p4, p5, p6 = _patches([])
+    with p1, p2, p3, p4, p5, p6, patch.object(
         site_service, "_check_session_ownership", return_value=None
     ), patch.object(site_service, "_load_bundle", return_value="cached") as loader:
         site_service.build_site(
@@ -109,8 +129,8 @@ def test_single_repo_with_session_reuses_the_cached_bundle():
 
 
 def test_multi_repo_never_reuses_the_session_bundle():
-    p1, p2, p3, p4, p5 = _patches([])
-    with p1, p2, p3, p4, p5, patch.object(
+    p1, p2, p3, p4, p5, p6 = _patches([])
+    with p1, p2, p3, p4, p5, p6, patch.object(
         site_service, "_check_session_ownership", return_value=None
     ), patch.object(site_service, "_load_bundle") as loader:
         site_service.build_site(
@@ -123,8 +143,8 @@ def test_multi_repo_never_reuses_the_session_bundle():
 
 
 def test_persistence_failure_does_not_block_the_download():
-    p1, p2, p3, p4, _ = _patches([])
-    with p1, p2, p3, p4, patch.object(
+    p1, p2, p3, p4, _, p6 = _patches([])
+    with p1, p2, p3, p4, p6, patch.object(
         site_service.supabase_client, "insert_artifact", side_effect=RuntimeError("db down")
     ):
         result = site_service.build_site(user_id="u1", repo_urls=[], evidence_ids=[])
@@ -153,8 +173,8 @@ def test_build_site_emits_a_countable_site_build_event(monkeypatch):
         lambda session_id, uid, kind, payload: captured.append((uid, kind)),
     )
 
-    p1, p2, p3, p4, p5 = _patches([])
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = _patches([])
+    with p1, p2, p3, p4, p5, p6:
         site_service.build_site(user_id=user_id, repo_urls=[], evidence_ids=[])
 
     ends = [c for c in captured if c[1] == "site_build.end"]
@@ -183,8 +203,8 @@ def test_caller_supplied_session_still_binds_to_the_caller(monkeypatch):
         lambda session_id, uid, kind, payload: captured.append((uid, kind)),
     )
 
-    p1, p2, p3, p4, p5 = _patches([])
-    with p1, p2, p3, p4, p5, patch.object(
+    p1, p2, p3, p4, p5, p6 = _patches([])
+    with p1, p2, p3, p4, p5, p6, patch.object(
         site_service, "_check_session_ownership", return_value=None
     ):
         site_service.build_site(
@@ -202,7 +222,7 @@ def test_caller_supplied_session_still_binds_to_the_caller(monkeypatch):
 def test_theme_reported_is_the_one_actually_rendered():
     """The response must name what was rendered, not what the model asked for."""
     pack = SitePack(name="Andre", theme=Theme(palette="neon", layout="zigzag"))
-    p1, p2, p3, p4, p5 = _patches([], pack=pack)
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = _patches([], pack=pack)
+    with p1, p2, p3, p4, p5, p6:
         result = site_service.build_site(user_id="u1", repo_urls=[], evidence_ids=[])
     assert result.theme == {"palette": "slate", "layout": "stack"}

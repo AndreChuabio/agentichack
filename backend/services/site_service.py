@@ -27,6 +27,7 @@ from backend.services.plugin_service import (
     _load_bundle,
     fetch_repo_bundle,
 )
+from backend.services.publish_target import HostedTarget
 from paperpilot import supabase_client, trace
 from paperpilot.github_ingest import _parse_repo_url
 from paperpilot.site_extract import build_pack
@@ -38,13 +39,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SiteResult:
-    """One built site: name, resolved theme, preview, zip, and what was dropped."""
+    """One built site: name, resolved theme, preview, zip, and what was dropped.
+
+    ``public_url`` is the address the site WOULD answer on. It is not live
+    until the user takes the separate publish action, because the build files
+    the render as a draft.
+    """
 
     site_name: str
     theme: dict
     html_preview: str
     zip_bytes: bytes
     skipped: list[dict]
+    slug: str = ""
+    public_url: str = ""
 
 
 def _profile_dict(user_id: str) -> dict[str, str]:
@@ -179,6 +187,17 @@ def build_site(
         preview = render_index_html(pack, inline_css=True)
         site_name = site_slug(pack.name)
 
+        # Reserve the slug and file the render as a DRAFT. Nothing is world
+        # readable until the user takes the separate publish action: unlike a
+        # zip, which is inert until they run git push, a hosted URL would
+        # otherwise be live the instant they clicked Generate. The draft stores
+        # the same standalone HTML the preview shows, so it is reused here
+        # rather than rendered a second time.
+        target = HostedTarget()
+        slug = target.reserve_slug(user_id, pack.name)
+        target.save_draft(user_id, slug, preview)
+        public_url = target.public_url(slug)
+
         # What was actually rendered, not what the model asked for. The
         # renderer resolves the theme independently, so reporting the raw value
         # would tell the client "neon" while the page it downloaded is slate.
@@ -215,4 +234,6 @@ def build_site(
         html_preview=preview,
         zip_bytes=zip_bytes,
         skipped=skipped,
+        slug=slug,
+        public_url=public_url,
     )
