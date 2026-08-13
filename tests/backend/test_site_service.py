@@ -67,7 +67,7 @@ def _patches(evidence_rows, pack=None, bundle_side_effect=None):
         patch.object(
             site_service,
             "fetch_repo_bundle",
-            side_effect=bundle_side_effect or (lambda url: "bundle"),
+            side_effect=bundle_side_effect or (lambda url, **kw: "bundle"),
         ),
         patch.object(site_service.supabase_client, "insert_artifact", return_value=None),
         patch.object(site_service, "HostedTarget", _StubTarget),
@@ -101,7 +101,7 @@ def test_only_requested_evidence_reaches_the_pack():
 
 
 def test_unreachable_repo_is_skipped_not_fatal():
-    def _boom(url: str) -> str:
+    def _boom(url: str, **kw) -> str:
         if "bad" in url:
             raise RuntimeError("404 from GitHub")
         return "bundle"

@@ -36,6 +36,14 @@ from paperpilot.site_render import build_site_zip, render_index_html
 
 logger = logging.getLogger(__name__)
 
+# Tokens per repo when building a site. The ingest default is 600K, sized for
+# reading ONE repo exhaustively to extract a plugin. A site reads up to
+# MAX_REPOS of them into a single prompt, where 600K each would be ~4.8M tokens
+# -- past the model's context window, so the build would fail rather than merely
+# cost a fortune. A project card needs the README, the structure and a taste of
+# the code, which this comfortably covers.
+SITE_TOKENS_PER_REPO = 40_000
+
 
 @dataclass(frozen=True)
 class SiteResult:
@@ -127,7 +135,7 @@ def _bundles(
             bundle = (
                 _load_bundle(session_id=session_id, user_id=user_id, repo_url=url)
                 if reuse
-                else fetch_repo_bundle(url)
+                else fetch_repo_bundle(url, token_cap=SITE_TOKENS_PER_REPO)
             )
             repos.append((f"{owner}/{name}", bundle))
         except Exception as exc:  # noqa: BLE001 -- one repo must not fail the build

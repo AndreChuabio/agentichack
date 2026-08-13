@@ -40,6 +40,45 @@ ASSIST = Quota(kind_prefix="assist", limit=20, window_days=1, noun="assistant qu
 SITE = Quota(kind_prefix="site_build", limit=5, window_days=30, noun="portfolio site build")
 ENRICH = Quota(kind_prefix="profile_enrich", limit=20, window_days=30, noun="profile autofill")
 
+# Caps that apply only to callers running on Merit's key. Each of these is
+# output-bounded at a few hundred tokens, which is why Merit absorbs them at
+# all; the repo-reading surfaces stay on the caller's own key because a 600K
+# token bundle has no comparable ceiling.
+# The prefixes are deliberately their own namespace rather than reusing the
+# kinds these paths already emit. draft.py emits one "draft.<section>" event per
+# section and cfp_match emits both "match.embed" and "match.nimble_augment", so
+# a prefix of "draft" or "match" would count several rows for a single request
+# and burn the cap at an unpredictable rate. These match exactly one row each.
+DRAFT = Quota(kind_prefix="quota_draft", limit=10, window_days=30, noun="paper draft")
+MATCH = Quota(kind_prefix="quota_match", limit=40, window_days=30, noun="venue match")
+OUTREACH = Quota(
+    kind_prefix="quota_outreach", limit=20, window_days=30, noun="outreach draft"
+)
+
+
+def admit(user_id: str, quota: Quota) -> None:
+    """Check a cap and record the request against it, unless the caller is BYOK.
+
+    Somebody who supplied an X-LLM-Key is paying for their own inference, so
+    capping them would charge them for the privilege of not costing us anything.
+    The cap bounds Merit's spend and applies exactly where Merit is spending.
+
+    The request is counted on admission rather than on success. That charges a
+    failed call, which is the conservative direction: the alternative leaves a
+    surface where anything that reliably errors late is free to retry forever.
+    """
+    from backend.byok import byok_in_effect
+    from paperpilot import trace
+
+    if byok_in_effect():
+        return
+    enforce(user_id, quota)
+    # Emit the single row this quota counts. Bound to the caller, because a
+    # NULL-user row is invisible to user_event_count's WHERE user_id filter.
+    session_id = trace.new_session(user_id)
+    with trace.step(session_id, quota.kind_prefix, user_id=user_id):
+        pass
+
 
 def enforce(user_id: str, quota: Quota) -> None:
     """Raise 429 when the user is at or over the limit for this quota."""

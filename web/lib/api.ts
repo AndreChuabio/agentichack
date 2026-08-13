@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { getLlmKey } from "@/lib/llmKey";
 import type {
   AssistHandlers,
   AssistSurface,
@@ -76,6 +77,14 @@ async function authedFetch(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
   };
+  // Sent only when the user has actually set one. The repo-reading surfaces
+  // refuse a request without it; every other surface falls back to Merit's key
+  // and caps the caller instead, so omitting it is a supported state rather
+  // than an error.
+  const llmKey = getLlmKey();
+  if (llmKey) {
+    headers["X-LLM-Key"] = llmKey;
+  }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
@@ -168,12 +177,17 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<void> {
     const token = await getAccessToken();
+    // This path builds its own request rather than going through authedFetch,
+    // so the key header has to be repeated here or a BYOK caller would be
+    // metered against Merit's cap while paying for their own inference.
+    const draftKey = getLlmKey();
     const response = await fetch(`${API_BASE_URL}/draft`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        ...(draftKey ? { "X-LLM-Key": draftKey } : {}),
       },
       body: JSON.stringify({ summary, venue }),
       signal,

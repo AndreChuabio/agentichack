@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend import quotas
 from backend.auth import AuthUser, CurrentUser
-from backend.byok import RequireLLMKey
+from backend.byok import OptionalLLMKey
 from backend.services import enrich_service, market_service, resume_service
 from paperpilot import trace
 
@@ -161,9 +161,10 @@ def put_profile(
 def generate_outreach(
     body: OutreachGenerateRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
+    _: None = OptionalLLMKey,
 ) -> list[DraftCardOut]:
     """Generate draft cards for a purpose and log each event for the caller."""
+    quotas.admit(user.id, quotas.OUTREACH)
     try:
         cards: list[dict[str, Any]] = market_service.generate_outreach(
             user_id=user.id, purpose=body.purpose, context=body.context

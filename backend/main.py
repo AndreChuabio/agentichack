@@ -14,7 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.auth import AuthUser, CurrentUser
-from backend.byok import RequireLLMKey
+from backend import quotas
+from backend.byok import OptionalLLMKey
 from backend.routers import (
     account,
     assist,
@@ -125,9 +126,12 @@ def me(user: AuthUser = CurrentUser) -> MeResponse:
 def match(
     req: MatchRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
+    _: None = OptionalLLMKey,
 ) -> list[VenueResponse]:
     """Rank open CFP venues for a research summary via Supabase pgvector."""
+    # One embedding of a short summary: cents per thousand calls, so Merit
+    # absorbs it rather than making the surface unusable without a key.
+    quotas.admit(user.id, quotas.MATCH)
     matches = rank_venues(req.summary, limit=req.limit, horizon_days=req.horizon_days)
     return [
         VenueResponse(
