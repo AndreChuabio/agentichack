@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Profile, SourceStatus } from "@/lib/types";
+import type { Profile, RepoOption, SourceStatus } from "@/lib/types";
 import { api } from "@/lib/api";
 import {
   Button,
@@ -28,6 +28,8 @@ interface MarketProfile {
   scholar_url: string;
   site_url: string;
   resume_text: string;
+  /** Repos the user ticked. A GitHub URL alone says who they are, not what to read. */
+  selected_repos: string[];
 }
 
 const EMPTY_PROFILE: MarketProfile = {
@@ -40,7 +42,14 @@ const EMPTY_PROFILE: MarketProfile = {
   scholar_url: "",
   site_url: "",
   resume_text: "",
+  selected_repos: [],
 };
+
+type ReposState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "done"; repos: RepoOption[] }
+  | { kind: "error"; message: string };
 
 type SaveState =
   | { kind: "idle" }
@@ -105,7 +114,15 @@ function fromProfile(source: Profile): MarketProfile {
     scholar_url: readString(source, "scholar_url"),
     site_url: readString(source, "site_url"),
     resume_text: readString(source, "resume_text"),
+    selected_repos: readStringList(source, "selected_repos"),
   };
+}
+
+/** selected_repos arrives from a jsonb column, so anything else means empty. */
+function readStringList(source: Profile, key: keyof MarketProfile): string[] {
+  const value = source[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 interface ProfileFormProps {
@@ -120,6 +137,7 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const [autofill, setAutofill] = useState<AutofillState>({ kind: "idle" });
   const [resume, setResume] = useState<ResumeState>({ kind: "idle" });
+  const [repos, setRepos] = useState<ReposState>({ kind: "idle" });
 
   useEffect(() => {
     let active = true;
@@ -143,6 +161,37 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
       active = false;
     };
   }, []);
+
+  /**
+   * Load the repos behind the pasted GitHub URL so the user can tick the ones
+   * worth reading. A profile URL says who somebody is; it does not say which of
+   * forty repos should shape their site or their outreach drafts.
+   */
+  async function loadRepos() {
+    setRepos({ kind: "loading" });
+    try {
+      const result = await api.publish.listRepos();
+      setRepos({ kind: "done", repos: result.repos });
+      // Only adopt the stored selection when the user has not picked yet in
+      // this session, so loading the list never discards their current ticks.
+      if (profile.selected_repos.length === 0 && result.selected.length > 0) {
+        update("selected_repos", result.selected);
+      }
+    } catch (err: unknown) {
+      setRepos({
+        kind: "error",
+        message:
+          err instanceof Error ? err.message : "Could not read your repositories",
+      });
+    }
+  }
+
+  function toggleRepo(url: string) {
+    const chosen = profile.selected_repos.includes(url)
+      ? profile.selected_repos.filter((item) => item !== url)
+      : [...profile.selected_repos, url];
+    update("selected_repos", chosen);
+  }
 
   function update<K extends keyof MarketProfile>(
     key: K,
@@ -355,6 +404,91 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
             value={profile.site_url}
             onChange={(e) => update("site_url", e.target.value)}
           />
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Which repositories to read</p>
+              <p className="text-sm text-slate-600">
+                Your GitHub URL says who you are. Pick the repos worth reading so
+                drafts and your site are built from the right work.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={loadRepos}
+              disabled={repos.kind === "loading" || !profile.github_url.trim()}
+            >
+              {repos.kind === "loading" ? (
+                <>
+                  <Spinner size={16} />
+                  Loading
+                </>
+              ) : (
+                "Load my repositories"
+              )}
+            </Button>
+          </div>
+
+          {!profile.github_url.trim() && (
+            <p className="text-sm text-slate-500">
+              Add your GitHub URL above first.
+            </p>
+          )}
+
+          {repos.kind === "error" && (
+            <p className="text-sm text-red-600">{repos.message}</p>
+          )}
+
+          {repos.kind === "done" && repos.repos.length === 0 && (
+            <p className="text-sm text-slate-500">
+              No public repositories found for that account.
+            </p>
+          )}
+
+          {repos.kind === "done" && repos.repos.length > 0 && (
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {repos.repos.map((repo) => (
+                <li key={repo.html_url} className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    id={`repo-${repo.full_name}`}
+                    className="mt-1"
+                    checked={profile.selected_repos.includes(repo.html_url)}
+                    onChange={() => toggleRepo(repo.html_url)}
+                  />
+                  <label
+                    htmlFor={`repo-${repo.full_name}`}
+                    className="text-sm leading-snug"
+                  >
+                    <span className="font-medium">{repo.full_name}</span>
+                    {repo.language && (
+                      <span className="text-slate-500"> · {repo.language}</span>
+                    )}
+                    {repo.stars > 0 && (
+                      <span className="text-slate-500"> · {repo.stars}★</span>
+                    )}
+                    {repo.fork && (
+                      <span className="text-slate-500"> · fork</span>
+                    )}
+                    {repo.description && (
+                      <span className="block text-slate-600">
+                        {repo.description}
+                      </span>
+                    )}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {profile.selected_repos.length > 0 && (
+            <p className="text-sm text-slate-600">
+              {profile.selected_repos.length} selected. Saved with your profile.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 rounded-2xl bg-primary-50/60 px-4 py-4">
