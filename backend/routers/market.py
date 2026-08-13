@@ -7,6 +7,7 @@ Senso generation is delegated to the existing paperpilot.outreach pipeline.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -17,6 +18,8 @@ from backend.auth import AuthUser, CurrentUser
 from backend.byok import RequireLLMKey
 from backend.services import enrich_service, market_service, resume_service
 from paperpilot import trace
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -271,9 +274,22 @@ def autofill_profile(
     user: AuthUser = CurrentUser,
     _: None = RequireLLMKey,
 ) -> AutofillResponse:
-    """Propose profile fields from pasted links. Never writes the profile."""
+    """Propose profile fields from pasted links. Never writes the profile.
+
+    Individual dead sources are reported inside the result, not raised -- only a
+    failure of the proposal call itself reaches the ladder below.
+    """
     quotas.enforce(user.id, quotas.ENRICH)
-    result = enrich_service.autofill(user.id, body.model_dump())
+    try:
+        result = enrich_service.autofill(user.id, body.model_dump())
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- surface pipeline errors as 502
+        logger.exception("profile autofill failed for user=%s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Autofill failed: {exc}",
+        ) from exc
     return AutofillResponse(
         proposed=result.proposed,
         sources=[SourceStatusOut(**vars(s)) for s in result.sources],

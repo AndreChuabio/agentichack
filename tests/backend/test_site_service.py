@@ -44,6 +44,10 @@ class _StubTarget:
     tests would open a database connection.
     """
 
+    def reserve_and_save(self, user_id: str, name: str, html: str) -> str:
+        self.saved_html = html
+        return "andre-chuabio"
+
     def reserve_slug(self, user_id: str, name: str) -> str:
         return "andre-chuabio"
 

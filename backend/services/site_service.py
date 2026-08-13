@@ -194,8 +194,10 @@ def build_site(
         # the same standalone HTML the preview shows, so it is reused here
         # rather than rendered a second time.
         target = HostedTarget()
-        slug = target.reserve_slug(user_id, pack.name)
-        target.save_draft(user_id, slug, preview)
+        # One connection picks the slug and writes the draft, so the unique
+        # index decides a collision rather than a probe that another build can
+        # win between.
+        slug = target.reserve_and_save(user_id, pack.name, preview)
         public_url = target.public_url(slug)
 
         # What was actually rendered, not what the model asked for. The

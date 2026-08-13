@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 from typing import Final, Protocol
 
+from psycopg.errors import UniqueViolation
+
 from paperpilot import supabase_client
 from paperpilot.site_models import site_slug
 
@@ -29,6 +31,15 @@ RESERVED_SLUGS: Final[frozenset[str]] = frozenset(
 _MAX_SLUG_ATTEMPTS: Final = 50
 
 _DEFAULT_BASE: Final = "https://meritai.me"
+
+# Only `html` and `slug` move. `live_html` and `published` are untouched, which
+# is what stops a rebuild from changing or taking down the page a visitor sees.
+_UPSERT_DRAFT: Final = (
+    "INSERT INTO published_site (user_id, slug, html) "
+    "VALUES (%s, %s, %s) "
+    "ON CONFLICT (user_id) DO UPDATE SET "
+    "slug = EXCLUDED.slug, html = EXCLUDED.html, updated_at = now()"
+)
 
 
 class PublishTarget(Protocol):
@@ -93,6 +104,53 @@ class HostedTarget:
             conn.close()
         raise ValueError(f"could not find a free slug for {name!r}")
 
+    def _candidates(self, name: str) -> list[str]:
+        """Every slug this name could take, best first, reserved names skipped."""
+        base = site_slug(name)
+        return [
+            candidate
+            for attempt in range(1, _MAX_SLUG_ATTEMPTS + 1)
+            if (candidate := (base if attempt == 1 else f"{base}-{attempt}"))
+            not in RESERVED_SLUGS
+        ]
+
+    def reserve_and_save(self, user_id: str, name: str, html: str) -> str:
+        """Pick this user's slug and file the draft under it, on one connection.
+
+        reserve_slug and save_draft were a check and an act on two separate
+        connections, so two users whose names slugify identically could both be
+        handed the same free candidate, and the loser's insert would hit the
+        slug unique index and escape as a raw Postgres message inside a 502.
+
+        Here the constraint decides rather than the probe: a unique violation on
+        one candidate simply moves to the next. The slug this user already holds
+        is still tried first and alone, so a rebuild never migrates anyone off a
+        URL they have already shared.
+        """
+        conn = supabase_client.get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT slug FROM published_site WHERE user_id = %s", (user_id,)
+                )
+                held = cur.fetchone()
+                candidates = (
+                    [str(held[0])]
+                    if held is not None and held[0]
+                    else self._candidates(name)
+                )
+                for candidate in candidates:
+                    try:
+                        cur.execute(_UPSERT_DRAFT, (user_id, candidate, html))
+                    except UniqueViolation:
+                        conn.rollback()
+                        continue
+                    conn.commit()
+                    return candidate
+        finally:
+            conn.close()
+        raise ValueError(f"could not find a free slug for {name!r}")
+
     def save_draft(self, user_id: str, slug: str, html: str) -> None:
         """Write the site as a draft. Never changes what is being served.
 
@@ -105,13 +163,7 @@ class HostedTarget:
         conn = supabase_client.get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO published_site (user_id, slug, html) "
-                    "VALUES (%s, %s, %s) "
-                    "ON CONFLICT (user_id) DO UPDATE SET "
-                    "slug = EXCLUDED.slug, html = EXCLUDED.html, updated_at = now()",
-                    (user_id, slug, html),
-                )
+                cur.execute(_UPSERT_DRAFT, (user_id, slug, html))
             conn.commit()
         finally:
             conn.close()
