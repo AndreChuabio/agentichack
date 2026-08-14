@@ -44,6 +44,33 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Placeholder for a step whose prerequisite is not met yet. Keeps all four
+ * steps visible on the page so a new user sees the whole journey up front,
+ * instead of sections appearing one by one as they progress.
+ */
+function LockedStep({
+  step,
+  title,
+  hint,
+}: {
+  step: string;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <section className="flex flex-col gap-4 opacity-70">
+      <div className="flex items-center gap-2">
+        <Badge tone="neutral">{step}</Badge>
+        <CardTitle>{title}</CardTitle>
+      </div>
+      <Card className="border-dashed">
+        <CardDescription>{hint}</CardDescription>
+      </Card>
+    </section>
+  );
+}
+
 function base64ToBlob(base64: string, type: string): Blob {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -461,7 +488,13 @@ export default function ProductizePage() {
             </div>
           ) : null}
         </section>
-      ) : null}
+      ) : (
+        <LockedStep
+          step="2"
+          title="Pick a venue"
+          hint="Once your research summary is in, Merit ranks the journals, conferences, and workshops that fit it. The ranked venues appear here with a fit score, and you pick the one to write toward."
+        />
+      )}
 
       {/* Step 3: Draft stream */}
       {draftStarted ? (
@@ -491,7 +524,13 @@ export default function ProductizePage() {
             streaming={draftStreaming}
           />
         </section>
-      ) : null}
+      ) : (
+        <LockedStep
+          step="3"
+          title="Live draft"
+          hint="Pick a venue in step 2 and Merit drafts the paper section by section, streaming live into this space so you can watch it come together."
+        />
+      )}
 
       {/* Step 4: Export + plugin */}
       {draftComplete ? (
@@ -564,7 +603,13 @@ export default function ProductizePage() {
             ) : null}
           </Card>
         </section>
-      ) : null}
+      ) : (
+        <LockedStep
+          step="4"
+          title="Export"
+          hint="When the draft finishes, build the LaTeX files here: a .tex manuscript and its .bib references, ready to drop into Overleaf and submit."
+        />
+      )}
 
       {/* Optional: package the repo as a Claude plugin. Available once a
           summary exists, folded after the paper flow as a side output. */}
