@@ -8,7 +8,6 @@ import type {
   Cfp,
   Citation,
   DraftCard,
-  DraftDone,
   DraftHandlers,
   EvidenceInput,
   EvidenceItem,
@@ -25,6 +24,7 @@ import type {
   ResearchSummary,
   ResumeTextResponse,
   SentInput,
+  SiteStatus,
   Venue,
 } from "@/lib/types";
 
@@ -248,7 +248,35 @@ export const api = {
           break;
         }
         case "done": {
-          handlers.onDone(payload as DraftDone);
+          // The backend done event ships sections as name -> payload object
+          // ({section, text, citations, stripped_ids}); the UI state is
+          // name -> string. Normalize here so a payload object can never
+          // reach React as a child (it white-screened the app at the exact
+          // moment a draft finished).
+          const raw = payload as {
+            sections?: Record<string, unknown>;
+            citations?: Citation[];
+          };
+          const sections: Record<string, string> = {};
+          const collected: Citation[] = [...(raw.citations ?? [])];
+          for (const [name, value] of Object.entries(raw.sections ?? {})) {
+            if (typeof value === "string") {
+              sections[name] = value;
+            } else if (value && typeof value === "object") {
+              const sp = value as { text?: string; citations?: Citation[] };
+              sections[name] = sp.text ?? "";
+              collected.push(...(sp.citations ?? []));
+            }
+          }
+          const seen = new Set<string>();
+          const citations: Citation[] = [];
+          for (const c of collected) {
+            if (!seen.has(c.key)) {
+              seen.add(c.key);
+              citations.push(c);
+            }
+          }
+          handlers.onDone({ sections, citations });
           break;
         }
         case "error": {
@@ -486,9 +514,21 @@ export const api = {
       });
     },
 
-    /** The caller's GitHub repos for the picker, plus their last selection. */
-    async listRepos(): Promise<ReposResponse> {
-      return requestJson<ReposResponse>("/publish/repos");
+    /**
+     * The caller's GitHub repos for the picker, plus their last selection.
+     * Pass githubUrl to list repos for a URL typed but not yet saved on the
+     * profile; omitted, the server reads the saved profile URL.
+     */
+    async listRepos(githubUrl?: string): Promise<ReposResponse> {
+      const qs = githubUrl
+        ? `?github_url=${encodeURIComponent(githubUrl)}`
+        : "";
+      return requestJson<ReposResponse>(`/publish/repos${qs}`);
+    },
+
+    /** Whether the caller has a built site and whether it is live. */
+    async status(): Promise<SiteStatus> {
+      return requestJson<SiteStatus>("/publish/site/live");
     },
 
     /** Make the built site public. Returns the URL it now answers on. */

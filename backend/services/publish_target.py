@@ -206,3 +206,23 @@ class HostedTarget:
             conn.commit()
         finally:
             conn.close()
+
+    def status(self, user_id: str) -> tuple[bool, bool, str | None]:
+        """Return (built, live, public_url) for the caller's site.
+
+        Lets the Publish page restore a live site's state on mount, so the
+        take-down control stays reachable in a fresh session without
+        rebuilding first.
+        """
+        conn = supabase_client.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT slug, published FROM published_site WHERE user_id = %s",
+                (user_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return (False, False, None)
+        slug, published = str(row[0]), bool(row[1])
+        return (True, published, self.public_url(slug) if published else None)

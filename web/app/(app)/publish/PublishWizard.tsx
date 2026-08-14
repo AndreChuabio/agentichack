@@ -37,6 +37,28 @@ export function PublishWizard() {
   const [busy, setBusy] = useState(false);
   const [liveBusy, setLiveBusy] = useState(false);
 
+  // Restore the published-site state on mount, so a site published in an
+  // earlier session shows as Live (with its take-down control) instead of
+  // silently vanishing from the page until the user rebuilds.
+  useEffect(() => {
+    let live = true;
+    api.publish
+      .status()
+      .then((s) => {
+        if (!live) return;
+        if (s.live && s.url) {
+          setSiteState("live");
+          setLiveUrl(s.url);
+        }
+      })
+      .catch(() => {
+        // Best-effort restore; building still works without it.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   useEffect(() => {
     let live = true;
     api.evidence
@@ -176,6 +198,32 @@ export function PublishWizard() {
 
   return (
     <div className="space-y-8">
+      {!result && siteState === "live" && liveUrl && (
+        <section className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm">
+          <p className="font-medium text-green-700">Your site is live</p>
+          <p className="text-slate-600">
+            <a
+              className="font-mono underline"
+              href={liveUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {liveUrl}
+            </a>
+          </p>
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={takeDown}
+              disabled={liveBusy}
+              className="rounded-full border px-5 py-2 disabled:opacity-50"
+            >
+              {liveBusy ? "Working..." : "Take down"}
+            </button>
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="font-semibold">Step 1: Your repositories</h2>
         <p className="text-sm text-slate-600">

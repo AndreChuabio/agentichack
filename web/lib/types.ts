@@ -60,6 +60,13 @@ export interface DraftDone {
   citations?: Citation[];
 }
 
+/** Published-site state, restored on the Publish page at mount. */
+export interface SiteStatus {
+  built: boolean;
+  live: boolean;
+  url?: string | null;
+}
+
 export interface ExportResult {
   tex: string;
   bib: string;

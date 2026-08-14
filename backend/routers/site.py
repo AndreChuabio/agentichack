@@ -161,6 +161,25 @@ def take_down(user: AuthUser = CurrentUser) -> None:
     HostedTarget().unpublish(user.id)
 
 
+class SiteStatusResponse(BaseModel):
+    """Whether the caller has a built site and whether it is live."""
+
+    built: bool
+    live: bool
+    url: str | None = None
+
+
+@router.get("/publish/site/live", response_model=SiteStatusResponse)
+def live_status(user: AuthUser = CurrentUser) -> SiteStatusResponse:
+    """Report the caller's published-site state.
+
+    The Publish page calls this on mount so a site published in an earlier
+    session shows its Live state and take-down control without a rebuild.
+    """
+    built, live, url = HostedTarget().status(user.id)
+    return SiteStatusResponse(built=built, live=live, url=url)
+
+
 class RepoOption(BaseModel):
     """One repo offered in the picker."""
 
@@ -181,20 +200,26 @@ class ReposResponse(BaseModel):
 
 
 @router.get("/publish/repos", response_model=ReposResponse)
-def list_repos(user: AuthUser = CurrentUser) -> ReposResponse:
+def list_repos(
+    github_url: str | None = None,
+    user: AuthUser = CurrentUser,
+) -> ReposResponse:
     """List the caller's GitHub repos for the picker.
 
     Reads the handle off the stored Market profile so the user does not paste
-    it twice. A profile with no GitHub URL is an empty list, not an error --
-    the picker then simply has nothing to offer.
+    it twice, unless the caller passes an explicit github_url -- the profile
+    form does that so a URL typed but not yet saved still lists repos. A
+    missing URL is an empty list, not an error -- the picker then simply has
+    nothing to offer.
 
     No RequireLLMKey: listing repos spends no model call.
     """
     profile = get_profile(user.id)
-    if not profile.github_url.strip():
+    handle = (github_url or profile.github_url or "").strip()
+    if not handle:
         return ReposResponse(repos=[], selected=[])
     try:
-        found = list_user_repos(profile.github_url)
+        found = list_user_repos(handle)
     except Exception as exc:  # noqa: BLE001 -- a GitHub outage is not a 500 here
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

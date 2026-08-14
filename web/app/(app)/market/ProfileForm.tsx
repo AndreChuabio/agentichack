@@ -170,7 +170,11 @@ export function ProfileForm({ onSaved }: ProfileFormProps) {
   async function loadRepos() {
     setRepos({ kind: "loading" });
     try {
-      const result = await api.publish.listRepos();
+      // Pass the typed URL so repos list even before the profile is saved;
+      // the server otherwise reads only the stored profile.
+      const result = await api.publish.listRepos(
+        profile.github_url.trim() || undefined,
+      );
       setRepos({ kind: "done", repos: result.repos });
       // Only adopt the stored selection when the user has not picked yet in
       // this session, so loading the list never discards their current ticks.
