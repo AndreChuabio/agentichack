@@ -142,14 +142,20 @@ export const api = {
     limit?: number,
     horizonDays?: number,
   ): Promise<Venue[]> {
-    return requestJson<Venue[]>("/match", {
-      method: "POST",
-      body: {
-        summary,
-        ...(limit !== undefined ? { limit } : {}),
-        ...(horizonDays !== undefined ? { horizon_days: horizonDays } : {}),
+    const venues = await requestJson<(Venue & { fit_score?: number })[]>(
+      "/match",
+      {
+        method: "POST",
+        body: {
+          summary,
+          ...(limit !== undefined ? { limit } : {}),
+          ...(horizonDays !== undefined ? { horizon_days: horizonDays } : {}),
+        },
       },
-    });
+    );
+    // The live API names the field fit_score; the UI type uses score.
+    // Accept either so a rename on one side can never render NaN.
+    return venues.map((v) => ({ ...v, score: v.score ?? v.fit_score ?? 0 }));
   },
 
   /** Chronological listing of the shared CFP corpus, with optional filters. */
@@ -265,16 +271,18 @@ export const api = {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        let separatorIndex: number;
-        // SSE messages are separated by a blank line.
-        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          if (rawEvent.trim()) dispatch(rawEvent);
+        // SSE messages are separated by a blank line. The backend emits
+        // CRLF-delimited frames, so accept both \n\n and \r\n\r\n and strip
+        // stray carriage returns before parsing lines.
+        let sep: RegExpExecArray | null;
+        while ((sep = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const rawEvent = buffer.slice(0, sep.index);
+          buffer = buffer.slice(sep.index + sep[0].length);
+          if (rawEvent.trim()) dispatch(rawEvent.replace(/\r/g, ""));
         }
       }
       const tail = buffer.trim();
-      if (tail) dispatch(tail);
+      if (tail) dispatch(tail.replace(/\r/g, ""));
     } catch (err) {
       if ((err as Error)?.name !== "AbortError") {
         handlers.onError((err as Error)?.message ?? "Draft stream aborted");
@@ -376,15 +384,16 @@ export const api = {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        let separatorIndex: number;
-        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          if (rawEvent.trim()) dispatch(rawEvent);
+        // Same CRLF-tolerant framing as the draft stream above.
+        let sep: RegExpExecArray | null;
+        while ((sep = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const rawEvent = buffer.slice(0, sep.index);
+          buffer = buffer.slice(sep.index + sep[0].length);
+          if (rawEvent.trim()) dispatch(rawEvent.replace(/\r/g, ""));
         }
       }
       const tail = buffer.trim();
-      if (tail) dispatch(tail);
+      if (tail) dispatch(tail.replace(/\r/g, ""));
     } catch (err) {
       if ((err as Error)?.name !== "AbortError") {
         handlers.onError((err as Error)?.message ?? "Assist stream aborted");
@@ -525,6 +534,20 @@ export const api = {
       return requestJson<{ url: string }>("/billing/checkout", {
         method: "POST",
       });
+    },
+  },
+
+  account: {
+    /** Everything Merit stores about the caller, grouped by table. */
+    async export(): Promise<Record<string, unknown>> {
+      return requestJson<Record<string, unknown>>("/account/export");
+    },
+    /** Delete the caller's account; every per-user row cascades away. */
+    async remove(): Promise<void> {
+      const response = await authedFetch("/account", { method: "DELETE" });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
     },
   },
 

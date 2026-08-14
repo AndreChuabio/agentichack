@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { PublicFooter } from "@/components/PublicFooter";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -18,6 +19,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       <main className="flex flex-1 items-center justify-center py-8">
         <div className="w-full max-w-md">{children}</div>
       </main>
+      <PublicFooter />
     </div>
   );
 }

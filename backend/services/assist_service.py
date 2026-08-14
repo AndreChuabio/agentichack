@@ -28,7 +28,7 @@ from paperpilot.outreach.evidence import USCIS_O1A_CRITERIA
 # prompt as a numbered list the model can reference by name.
 CRITERIA_GUIDE: list[tuple[str, str]] = list(USCIS_O1A_CRITERIA)
 
-_VALID_SURFACES: set[str] = {"track", "productize", "market"}
+_VALID_SURFACES: set[str] = {"track", "productize", "market", "publish", "cfp"}
 
 
 def _criteria_block() -> str:
@@ -45,7 +45,7 @@ SYS = (
     "a United States O-1A extraordinary-ability visa case. Speak to a smart "
     "non-expert who does not know the O-1A criteria. Be warm, concrete, and "
     "brief. Use short paragraphs or simple lists.\n\n"
-    "Merit has three surfaces:\n"
+    "Merit has five surfaces:\n"
     "- Track: the main surface. An evidence ledger where the user records "
     "real accomplishments against the eight O-1A criteria and sees how many "
     "criteria they satisfy.\n"
@@ -53,7 +53,12 @@ SYS = (
     "Claude plugin, which become evidence the user can Track.\n"
     "- Market: the user's profile plus outreach drafts to reach people who "
     "can support the case (recommendation letters, judging invitations, "
-    "media).\n\n"
+    "media).\n"
+    "- Publish: turns the user's repositories and profile into a hosted "
+    "portfolio site with a public link that makes their work legible to "
+    "reviewers and attorneys.\n"
+    "- Call for Papers (cfp): a browsable list of venues and submission "
+    "deadlines; publishing at one becomes evidence the user can Track.\n\n"
     "The eight O-1A criteria, in plain English:\n"
     f"{_criteria_block()}\n\n"
     "The single most important rule: USCIS requires evidence for at least "

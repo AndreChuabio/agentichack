@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import type { EvidenceInput, EvidenceLedger } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
@@ -66,6 +67,16 @@ export default function TrackPage() {
   const [entitled, setEntitled] = useState<boolean | null>(null);
   const [checkingOut, setCheckingOut] = useState(false);
   const [purchaseNote, setPurchaseNote] = useState<string | null>(null);
+  // True when this mount arrived from a Stripe success redirect. Until the
+  // webhook confirms (entitled flips true), the buy button never renders, so
+  // a paid user cannot be shown a second $99 checkout during webhook lag.
+  const [justPurchased] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("purchased") ===
+        "dossier",
+  );
+  const purchasePending = justPurchased && entitled === false;
 
   // Read the dismissed flag from localStorage in an SSR-safe way: the server
   // snapshot is always "dismissed" so the card never flashes during hydration,
@@ -179,12 +190,12 @@ export default function TrackPage() {
     }
   }, []);
 
-  // Load the dossier entitlement. After a Stripe return (?purchased=dossier) the
-  // webhook may lag, so poll a few times before giving up.
+  // Load the dossier entitlement. After a Stripe return (?purchased=dossier)
+  // the webhook may lag, so poll before giving up -- and keep purchasePending
+  // set if the poll budget runs out, so the buy button never comes back for
+  // someone who just paid.
   useEffect(() => {
     let cancelled = false;
-    const justPurchased =
-      new URLSearchParams(window.location.search).get("purchased") === "dossier";
 
     async function load(attempt: number): Promise<void> {
       try {
@@ -193,8 +204,16 @@ export default function TrackPage() {
         setEntitled(paid);
         if (justPurchased && paid) {
           setPurchaseNote("Payment received -- your full dossier is unlocked.");
-        } else if (justPurchased && !paid && attempt < 5) {
-          setTimeout(() => void load(attempt + 1), 2000);
+        } else if (justPurchased && !paid) {
+          if (attempt < 10) {
+            setTimeout(() => void load(attempt + 1), 2000);
+          } else {
+            setPurchaseNote(
+              "Payment received. Unlocking is taking longer than usual -- " +
+                "refresh this page in a minute, and email support (link in " +
+                "the footer) if it still does not appear.",
+            );
+          }
         }
       } catch {
         if (!cancelled) setEntitled(false);
@@ -204,7 +223,7 @@ export default function TrackPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [justPurchased]);
 
   const criteria: LiveCriterionGroup[] = useMemo(
     () => ledger?.criteria ?? [],
@@ -276,7 +295,7 @@ export default function TrackPage() {
                     ? `${remaining} more ${
                         remaining === 1 ? "area" : "areas"
                       } to reach the minimum of ${REQUIRED_TO_QUALIFY}`
-                    : `You have evidence in the ${REQUIRED_TO_QUALIFY}+ areas needed to qualify`}
+                    : `You have started the ${REQUIRED_TO_QUALIFY}+ areas USCIS asks for`}
                 </p>
               </div>
               <p className="font-display text-2xl font-bold text-ink">
@@ -382,7 +401,11 @@ export default function TrackPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              {entitled === false ? (
+              {entitled === false && purchasePending ? (
+                <Button variant="secondary" disabled>
+                  <Spinner size={16} /> Confirming your payment
+                </Button>
+              ) : entitled === false ? (
                 <Button
                   variant="primary"
                   onClick={handleUnlock}
@@ -415,10 +438,17 @@ export default function TrackPage() {
                 <span className="text-xs text-muted">
                   Add at least one piece of evidence to enable the export.
                 </span>
-              ) : entitled === false ? (
+              ) : entitled === false && !purchasePending ? (
                 <span className="text-xs text-muted">
-                  One-time unlock. Your evidence and per-criterion narratives stay
-                  free.
+                  One-time unlock. Your evidence and per-criterion narratives
+                  stay free. Backed by a{" "}
+                  <Link
+                    href="/refunds"
+                    className="font-medium underline-offset-2 hover:text-ink hover:underline"
+                  >
+                    14-day refund policy
+                  </Link>
+                  .
                 </span>
               ) : null}
             </div>

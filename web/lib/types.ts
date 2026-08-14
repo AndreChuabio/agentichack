@@ -206,7 +206,12 @@ export interface DraftHandlers {
 /* ----- Assist (Help me) streaming ----- */
 
 /** Which Merit surface the question is asked from. */
-export type AssistSurface = "track" | "productize" | "market";
+export type AssistSurface =
+  | "track"
+  | "productize"
+  | "market"
+  | "publish"
+  | "cfp";
 
 /** Request body for the streaming /assist endpoint. */
 export interface AssistRequest {

@@ -12,6 +12,7 @@ const PROTECTED_PREFIXES = [
   "/track",
   "/publish",
   "/cfp",
+  "/account",
 ];
 
 export async function proxy(request: NextRequest) {
@@ -21,6 +22,18 @@ export async function proxy(request: NextRequest) {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey) {
+    // Fail closed: a deploy missing the Supabase env must not serve the
+    // gated shell to anonymous visitors. Public routes still pass through.
+    const pathname = request.nextUrl.pathname;
+    const gated = PROTECTED_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+    if (gated) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
     return response;
   }
 

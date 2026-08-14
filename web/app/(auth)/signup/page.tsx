@@ -113,6 +113,13 @@ export default function SignupPage() {
       <p className="mt-2 text-center text-xs text-muted">
         By creating an account you agree to our{" "}
         <Link
+          href="/terms"
+          className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+        >
+          terms
+        </Link>{" "}
+        and{" "}
+        <Link
           href="/privacy"
           className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
         >

@@ -7,6 +7,7 @@ import { useUser } from "@/lib/useUser";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { HelpAssistant } from "@/components/HelpAssistant";
+import { SUPPORT_EMAIL } from "@/components/PublicFooter";
 
 interface NavLink {
   href: string;
@@ -120,12 +121,38 @@ export function AppShell({ children }: AppShellProps) {
       <footer className="border-t border-black/5 px-5 py-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 text-xs text-muted">
           <span>Merit is a document preparation tool, not a law firm.</span>
-          <Link
-            href="/privacy"
-            className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
-          >
-            Privacy policy
-          </Link>
+          <nav className="flex flex-wrap items-center gap-4">
+            <Link
+              href="/privacy"
+              className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              Privacy
+            </Link>
+            <Link
+              href="/terms"
+              className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              Terms
+            </Link>
+            <Link
+              href="/refunds"
+              className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              Refunds
+            </Link>
+            <Link
+              href="/account"
+              className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              Account
+            </Link>
+            <a
+              href={`mailto:${SUPPORT_EMAIL}`}
+              className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              Support
+            </a>
+          </nav>
         </div>
       </footer>
 
