@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "qa:live": "node qa/run-live.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.209",
