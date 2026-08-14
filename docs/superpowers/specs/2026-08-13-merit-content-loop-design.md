@@ -33,10 +33,17 @@ lacked: **Get Approval** and **Measure Result**. Both are in scope here.
 
 `MI6/Projects/MeritAI/GTM Strategy.md` lists payment infrastructure as the
 number-one blocker: "no Stripe or any billing library anywhere in the repo."
-That is stale. PR #23 shipped the $99 dossier paywall, PR #25 fixed the webhook
-that marks purchases paid, and `STRIPE_PRICE_DOSSIER` is set on Railway
-production, so the paywall is live. The manual Payment Link stopgap is
-unnecessary. The only open step is a test-card walk of the live purchase.
+That is stale in one direction and this spec initially overcorrected in the
+other. The truth (verified 2026-08-13 with the ads-launch-readiness session):
+the billing code shipped (PR #23 paywall, PR #25 webhook fix) and is deployed
+with `STRIPE_PRICE_DOSSIER` set -- but production runs **test-mode Stripe
+keys**, and the Stripe account has never been activated for live mode
+(`charges_enabled=false`). Checkout works and charges nobody. The blocker is
+not engineering: it is the Stripe dashboard activation only Andre can perform
+(business details + bank), after which cutover is minutes -- live price,
+webhook endpoint, env swap are pre-staged by the peer session. The Payment
+Link stopgap remains unnecessary. **Content consequence: no purchase CTA in
+any post until that session's green light; awareness content is unaffected.**
 
 ## Decisions locked
 
