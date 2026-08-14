@@ -60,11 +60,12 @@ panel_x="${panel_xy%,*}";  panel_y="${panel_xy#*,}"
 ffmpeg -hide_banner -loglevel error \
   -i "$plate" -i "$ui" \
   -filter_complex "\
+    [0:v]split=2[base][for_key]; \
     [1:v]scale=${panel_w}:-1[uiw]; \
     color=c=0x111111:s=${panel_wxh}[bg]; \
     [bg][uiw]overlay=(W-w)/2:(H-h)/2:shortest=1[panel]; \
-    [0:v][panel]overlay=${panel_x}:${panel_y}[with_ui]; \
-    [0:v]format=rgba,colorkey=${key}:${similarity}:0.05[keyed]; \
+    [base][panel]overlay=${panel_x}:${panel_y}[with_ui]; \
+    [for_key]format=rgba,colorkey=${key}:${similarity}:0.05[keyed]; \
     [with_ui][keyed]overlay=0:0[outv]" \
   -map "[outv]" -map "0:a?" \
   -c:v libx264 -pix_fmt yuv420p -crf 19 -preset medium -c:a copy \
