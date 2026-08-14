@@ -6,17 +6,34 @@ Ingest / draft / evidence / outreach endpoints follow in subsequent slices.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
-from backend.auth import AuthUser, CurrentUser
-from backend import quotas
-from backend.byok import OptionalLLMKey
-from backend.routers import (
+# Unconfigured stdlib logging drops every logger.info in the app -- including
+# the only record of a successful payment. Configure the root logger before
+# anything else so payment and quota events actually reach the Railway logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+# Before any backend import, deliberately. Modules imported below may read
+# configuration at import time, and a load_dotenv() that runs after them hands
+# those reads an empty environment -- which is how a dotenv-driven deploy ended
+# up with the paywall enabled and the billing endpoints 503ing, since
+# entitlements reads env at call time and billing did not.
+load_dotenv()
+
+from fastapi import FastAPI, Response, status  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+
+from backend.auth import AuthUser, CurrentUser  # noqa: E402
+from backend import quotas  # noqa: E402
+from backend.byok import OptionalLLMKey  # noqa: E402
+from backend.routers import (  # noqa: E402
     account,
     assist,
     billing,
@@ -29,15 +46,13 @@ from backend.routers import (
     plugin,
     site,
 )
-from backend.venues import rank_venues
-from paperpilot import redaction, supabase_client
-from paperpilot.llm_ingest import ResearchSummary
-
-load_dotenv()
+from backend.venues import rank_venues  # noqa: E402
+from paperpilot import redaction, supabase_client  # noqa: E402
+from paperpilot.llm_ingest import ResearchSummary  # noqa: E402
 
 # Bumped on every deploy that changes behaviour. Reported by /health so a
 # rollout can be confirmed rather than assumed.
-BUILD = "0.3.0-publish-byok-split"
+BUILD = "0.3.2-launch-hardening"
 
 app = FastAPI(title="Merit API", version=BUILD)
 
@@ -115,8 +130,12 @@ class MeResponse(BaseModel):
 
 
 @app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    """Liveness probe. Reports whether the Supabase connection is reachable."""
+def health(response: Response) -> HealthResponse:
+    """Liveness probe. Reports whether the Supabase connection is reachable.
+
+    Returns 503 when the database is unreachable so an external status-code
+    probe actually goes red; the body keeps the same shape either way.
+    """
     db_ok = False
     try:
         conn = supabase_client.get_conn()
@@ -127,7 +146,9 @@ def health() -> HealthResponse:
             conn.close()
     except Exception:  # noqa: BLE001 -- health must never raise
         db_ok = False
-    return HealthResponse(status="ok", database=db_ok, build=BUILD)
+    if not db_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return HealthResponse(status="ok" if db_ok else "degraded", database=db_ok, build=BUILD)
 
 
 @app.get("/me", response_model=MeResponse)

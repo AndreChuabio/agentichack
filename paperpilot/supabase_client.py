@@ -44,7 +44,7 @@ def _get_pool() -> ConnectionPool:
                 _pool = ConnectionPool(
                     conninfo=os.environ["SUPABASE_DB_URL"],
                     min_size=1,
-                    max_size=10,
+                    max_size=20,
                     max_idle=300.0,
                     kwargs={"autocommit": True},
                     open=True,
@@ -511,24 +511,126 @@ def record_pending_purchase(
             conn.close()
 
 
-def mark_purchase_paid(
+def recent_pending_purchase(
+    user_id: str,
+    product: str,
+    since: datetime,
+    conn: psycopg.Connection | None = None,
+) -> str | None:
+    """The Stripe session id of this user's most recent pending purchase.
+
+    Lets a second checkout click resume the session already in flight instead
+    of creating another one, which would capture a second charge for a product
+    the user is in the middle of buying.
+    """
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        row = conn.execute(
+            "SELECT stripe_session_id FROM purchases "
+            "WHERE user_id=%s AND product=%s AND status='pending' "
+            "AND stripe_session_id IS NOT NULL AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user_id, product, since),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        if owns:
+            conn.close()
+
+
+def purchase_status(
     stripe_session_id: str,
+    conn: psycopg.Connection | None = None,
+) -> str | None:
+    """The ledger status for a Stripe session, or None when no row exists.
+
+    Used by the webhook to tell a duplicate delivery (already paid) apart from
+    a paid session that granted nothing, which is an incident.
+    """
+    owns = conn is None
+    conn = conn or get_conn()
+    try:
+        row = conn.execute(
+            "SELECT status FROM purchases WHERE stripe_session_id=%s",
+            (stripe_session_id,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        if owns:
+            conn.close()
+
+
+def grant_purchase(
+    stripe_session_id: str,
+    user_id: str | None,
+    product: str,
+    amount_cents: int | None = None,
+    currency: str = "usd",
     stripe_payment_intent: str | None = None,
     conn: psycopg.Connection | None = None,
 ) -> bool:
-    """Mark a purchase paid from a verified Stripe webhook.
+    """Grant a paid purchase from a verified Stripe webhook.
 
-    Returns True only when a row moved from not-paid to paid, so a duplicate
-    webhook delivery is a no-op.
+    Three cases, in order:
+
+    1. A not-yet-paid row exists -> one idempotent UPDATE moves it to paid.
+    2. No row moved but the row is there -> it is already paid, so this is a
+       duplicate Stripe delivery and nothing happens.
+    3. No row at all -> the session was created outside POST /billing/checkout
+       (a Stripe Payment Link, say) or the pending insert failed. The row is
+       inserted as paid outright, because a captured charge must not go
+       ungranted just because a bookkeeping row is missing. This is why the
+       caller passes the user id Stripe carries on the session.
+
+    ``amount_cents`` comes from the session's amount_total, so the ledger holds
+    what was actually charged rather than a hardcoded price.
+
+    Returns True only when this call is what granted the purchase, so a
+    duplicate delivery, an unattributable session, and a real grant are all
+    distinguishable by the caller.
     """
     owns = conn is None
     conn = conn or get_conn()
     try:
         cur = conn.execute(
             "UPDATE purchases "
-            "SET status='paid', stripe_payment_intent=%s, updated_at=now() "
+            "SET status='paid', stripe_payment_intent=%s, "
+            "amount_cents=COALESCE(%s, amount_cents), updated_at=now() "
             "WHERE stripe_session_id=%s AND status <> 'paid'",
-            (stripe_payment_intent, stripe_session_id),
+            (stripe_payment_intent, amount_cents, stripe_session_id),
+        )
+        if cur.rowcount > 0:
+            return True
+
+        row = conn.execute(
+            "SELECT status FROM purchases WHERE stripe_session_id=%s",
+            (stripe_session_id,),
+        ).fetchone()
+        if row is not None:
+            # status is NOT NULL and the UPDATE excluded only 'paid' rows, so
+            # reaching here means the row is already paid: duplicate delivery.
+            return False
+
+        if not user_id:
+            # Nothing to attribute the charge to. The caller logs this loudly
+            # rather than inventing an owner for somebody's money.
+            return False
+
+        cur = conn.execute(
+            "INSERT INTO purchases "
+            "(user_id, product, status, amount_cents, currency, stripe_session_id, "
+            "stripe_payment_intent) "
+            "VALUES (%s, %s, 'paid', %s, %s, %s, %s) "
+            "ON CONFLICT (stripe_session_id) DO NOTHING",
+            (
+                user_id,
+                product,
+                amount_cents,
+                currency,
+                stripe_session_id,
+                stripe_payment_intent,
+            ),
         )
         return cur.rowcount > 0
     finally:

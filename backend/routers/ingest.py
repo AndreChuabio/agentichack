@@ -13,9 +13,11 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from backend import quotas
 from backend.auth import AuthUser, CurrentUser
 from backend.byok import RequireLLMKey
 from backend.services.ingest_service import ingest_repo
+from paperpilot import vertex
 from paperpilot.llm_ingest import ResearchSummary
 
 _log = logging.getLogger(__name__)
@@ -62,6 +64,13 @@ def ingest(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="repo_url is required",
         )
+
+    # On the first-party Vertex path the generation runs on Merit's GCP
+    # project regardless of the caller's X-LLM-Key, so it needs the same
+    # admission cap as every other Merit-funded surface. The gateway path
+    # spends the caller's own key and stays uncapped.
+    if vertex.vertex_enabled():
+        quotas.admit_always(user.id, quotas.INGEST)
 
     try:
         result = ingest_repo(repo_url, user.id, confirm_large=req.confirm_large)

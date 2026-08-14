@@ -43,9 +43,15 @@ def _client() -> Any:
     Imported lazily so the dependency is only required when Vertex is enabled.
     """
     from google import genai
+    from google.genai import types
 
+    # Bounded rather than the SDK default: a hung Vertex call would otherwise
+    # pin one of the limited worker threads indefinitely. Milliseconds.
     return genai.Client(
-        vertexai=True, project=_VERTEX_PROJECT, location=_VERTEX_LOCATION
+        vertexai=True,
+        project=_VERTEX_PROJECT,
+        location=_VERTEX_LOCATION,
+        http_options=types.HttpOptions(timeout=180_000),
     )
 
 

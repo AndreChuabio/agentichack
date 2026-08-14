@@ -5,10 +5,12 @@ The bound is enforced here and not in the Next.js client, because the
 backend connects to Supabase as service role and bypasses RLS -- anything
 enforced only in the UI is enforced nowhere.
 
-Quotas fail OPEN: if the ledger cannot be read, a user is not locked out of
-their own evidence. The ledger is a cost-control mechanism, not a security
-boundary, and the failure mode of over-serving is much cheaper than the
-failure mode of a user unable to reach their own petition data.
+Quotas fail CLOSED with a retryable 503: every quota here guards a surface
+where Merit is spending real money per request, and the moment the ledger
+becomes unreadable is exactly the moment of peak load, when an open gate
+turns a traffic spike into an unbounded bill. Reading a user's own stored
+evidence is never quota-gated, so failing closed here blocks only new
+generation, not access to petition data.
 """
 
 from __future__ import annotations
@@ -24,6 +26,15 @@ from paperpilot.supabase_client import user_event_count
 logger = logging.getLogger(__name__)
 
 
+_MERIT_KEY_REASON = (
+    "This surface runs on Merit's API key, which is why it is capped."
+)
+_ABUSE_CEILING_REASON = (
+    "This ceiling exists to catch runaway automation, not to limit what you "
+    "bought. Contact support if you genuinely need more."
+)
+
+
 @dataclass(frozen=True)
 class Quota:
     """A limit on how many of one kind of paid-for operation a user may run."""
@@ -32,9 +43,24 @@ class Quota:
     limit: int
     window_days: int
     noun: str
+    # Why this cap exists, shown to the user in the 429. Defaults to the
+    # cost-control wording, which is true of every cap except the ones that
+    # apply to a customer who has already paid.
+    reason: str = _MERIT_KEY_REASON
 
 
 DOSSIER = Quota(kind_prefix="evidence_dossier", limit=3, window_days=30, noun="dossier export")
+# The cap a paying customer gets instead of DOSSIER. Regenerating the dossier
+# after editing evidence is the normal way the product is used, so charging $99
+# and then refusing the fourth export is the wrong failure. Same kind_prefix, so
+# it counts the same emitted evidence_dossier.end rows.
+DOSSIER_PAID = Quota(
+    kind_prefix="evidence_dossier",
+    limit=30,
+    window_days=30,
+    noun="dossier export",
+    reason=_ABUSE_CEILING_REASON,
+)
 NARRATIVE = Quota(kind_prefix="evidence_draft", limit=30, window_days=30, noun="criterion narrative")
 ASSIST = Quota(kind_prefix="assist", limit=20, window_days=1, noun="assistant question")
 SITE = Quota(kind_prefix="site_build", limit=5, window_days=30, noun="portfolio site build")
@@ -54,6 +80,11 @@ MATCH = Quota(kind_prefix="quota_match", limit=40, window_days=30, noun="venue m
 OUTREACH = Quota(
     kind_prefix="quota_outreach", limit=20, window_days=30, noun="outreach draft"
 )
+# Repo ingest on the first-party Vertex path runs on Merit's GCP project no
+# matter what X-LLM-Key the caller sent, and a single confirmed-large run can
+# reach 600K input tokens. Enforced via admit_always because the BYOK
+# exemption does not apply where the platform pays anyway.
+INGEST = Quota(kind_prefix="quota_ingest", limit=10, window_days=30, noun="repo ingest")
 
 
 def admit(user_id: str, quota: Quota) -> None:
@@ -68,10 +99,21 @@ def admit(user_id: str, quota: Quota) -> None:
     surface where anything that reliably errors late is free to retry forever.
     """
     from backend.byok import byok_in_effect
-    from paperpilot import trace
 
     if byok_in_effect():
         return
+    admit_always(user_id, quota)
+
+
+def admit_always(user_id: str, quota: Quota) -> None:
+    """Check a cap and record the request, with no BYOK exemption.
+
+    For surfaces where Merit pays regardless of the caller's key -- the
+    first-party Vertex ingest path authenticates with Merit's service account
+    and never spends the X-LLM-Key the endpoint required.
+    """
+    from paperpilot import trace
+
     enforce(user_id, quota)
     # Emit the single row this quota counts. Bound to the caller, because a
     # NULL-user row is invisible to user_event_count's WHERE user_id filter.
@@ -85,9 +127,15 @@ def enforce(user_id: str, quota: Quota) -> None:
     since = datetime.now(timezone.utc) - timedelta(days=quota.window_days)
     try:
         used = user_event_count(user_id, quota.kind_prefix, since)
-    except Exception:  # noqa: BLE001 -- fail open, see module docstring
+    except Exception as exc:  # noqa: BLE001 -- fail closed, see module docstring
         logger.exception("quota check failed for user=%s quota=%s", user_id, quota.noun)
-        return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Merit is unusually busy right now and could not verify your "
+                "usage. Please try again in a moment."
+            ),
+        ) from exc
 
     if used < quota.limit:
         return
@@ -97,7 +145,6 @@ def enforce(user_id: str, quota: Quota) -> None:
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=(
             f"You have used all {quota.limit} {quota.noun}s for this {period} "
-            f"({quota.limit} per {period}). This surface runs on Merit's API key, "
-            "which is why it is capped."
+            f"({quota.limit} per {period}). {quota.reason}"
         ),
     )
