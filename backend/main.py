@@ -52,7 +52,7 @@ from paperpilot.llm_ingest import ResearchSummary  # noqa: E402
 
 # Bumped on every deploy that changes behaviour. Reported by /health so a
 # rollout can be confirmed rather than assumed.
-BUILD = "0.3.2-launch-hardening"
+BUILD = "0.3.3-publish-restore"
 
 app = FastAPI(title="Merit API", version=BUILD)
 
