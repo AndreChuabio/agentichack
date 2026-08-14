@@ -19,6 +19,64 @@ one pipeline:
 - Shared pipeline logic lives in `paperpilot/` and only there — never in a
   route handler or a Streamlit page.
 
+## This repo is part of the claudeMeow fleet
+
+This repository is one of several worked by **claudeMeow**, a shared automation
+system owned by the `Meowteam6` org (the org name is why there are six repos).
+The system is defined in [`Meowteam6/claudemeow`](https://github.com/Meowteam6/claudemeow);
+this section is the short version an agent working *here* needs.
+
+### How work arrives
+
+**GitHub Issues are the queue.** An issue labelled `queued` is a work order. An
+always-on executor on Andre's M4 Mac mini polls every 60s, claims the issue by
+swapping `queued` for `in-progress` (the label *is* the mutex — that is how two
+machines share one queue safely), creates a git worktree, and runs a headless
+Claude session against the ticket.
+
+The run ends in exactly one of two ways:
+
+- **A draft PR**, which waits for a human.
+- **`blocked`**, with the agent's own explanation in a comment.
+
+The executor is denied `gh pr merge`, `gh pr ready`, and `gh pr close` at the
+tool level. It physically cannot merge its own work or take a PR out of draft.
+**A human merges. Always.**
+
+### What this means for you
+
+- **Write tickets, not prose.** A `queued` issue is executed literally. Give it a
+  Problem, a What to build, and acceptance criteria. Vagueness becomes a wasted
+  run.
+- **Keep tickets small.** The inner session runs under `MAX_TURNS=150`. A run
+  that hits the cap **commits nothing and leaves no summary** — the work is lost
+  and the money is spent. If a ticket looks like it may run long, split it and
+  say so in the body.
+- **At most three sessions run at once** across the whole machine (memory-bound,
+  16 GB). Filing ten tickets does not make them go faster.
+- **Never assume a PR was reviewed** because it exists. Draft is the default
+  state, not a signal.
+
+### Conventions this fleet enforces
+
+- **Branches:** `type/IS-NNN-description` (IS = the GitHub Issue number)
+- **Commits:** Conventional Commits — `type(scope): description`
+- **No ticket refs in code or comments** — CHANGELOG only
+- **Never `--no-verify`.** Fix the hook, not the flag.
+
+### Talking to the fleet
+
+**MeowConcierge** (`@meowteam_bot` on Telegram) is the human front-end. It files
+tickets (`/queue`), reports per-repo state (`/status`), scopes work out loud
+(`/design`), researches into docs (`/study`), and runs scheduled rounds
+(`/loop`). It is **read-only** when answering questions — it can create work but
+never performs it. Everything it files lands in the same GitHub queue described
+above, so nothing here depends on Telegram being up.
+
+The fleet spans more than one machine (Andre's Mac mini and Nikki's laptop), so
+an issue may be claimed by either. Stale claims are swept and requeued
+automatically after 30 minutes.
+
 ## Commands (all verified against the Makefile / package.json)
 
 ```bash
@@ -49,8 +107,10 @@ functions, no emojis or exclamation marks; TypeScript avoids `any`.
 ## Ticket workflow
 
 - Issues labelled `queued` are picked up by the executor on the Mac mini.
-  It works the ticket on a branch, opens a **draft PR**, and moves the label
-  to `needs-review`. `in-progress` and `blocked` mark intermediate states.
+  It works the ticket on a branch and opens a **draft PR**. The executor
+  keeps the issue label in `in-progress`; a human changes it to `needs-review`
+  after reviewing the PR. `blocked` marks work that cannot proceed (see
+  "This repo is part of the claudeMeow fleet" above for more detail).
 - Branch format: `type/IS-NNN-description` (NNN = GitHub Issue number).
 - Commits: Conventional Commits, `type(scope): description`. Enforced by
   `.claude/hooks/guards/commit-guard.sh`; install it per clone with
