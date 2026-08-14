@@ -8,6 +8,7 @@ Senso generation is delegated to the existing paperpilot.outreach pipeline.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -163,11 +164,25 @@ def generate_outreach(
     user: AuthUser = CurrentUser,
     _: None = OptionalLLMKey,
 ) -> list[DraftCardOut]:
-    """Generate draft cards for a purpose and log each event for the caller."""
+    """Generate draft cards for a purpose and log each event for the caller.
+
+    The caller's saved profile is loaded here and threaded through the
+    pipeline as the sender identity, so every draft is written as the authed
+    user rather than as whoever the Senso knowledge base happens to describe.
+    An empty profile drafts with neutral placeholders, never an invented or
+    retrieved identity.
+    """
     quotas.admit(user.id, quotas.OUTREACH)
+    profile = market_service.get_profile(user.id)
+    sender_profile = {
+        k: v for k, v in asdict(profile).items() if k != "user_id"
+    }
     try:
         cards: list[dict[str, Any]] = market_service.generate_outreach(
-            user_id=user.id, purpose=body.purpose, context=body.context
+            user_id=user.id,
+            purpose=body.purpose,
+            context=body.context,
+            sender_profile=sender_profile,
         )
     except ValueError as exc:
         raise HTTPException(

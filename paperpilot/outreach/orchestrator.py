@@ -61,12 +61,23 @@ def generate_drafts(
     session_id: str,
     user_id: str,
     logger: Any | None = None,
+    sender_profile: dict[str, Any] | None = None,
 ) -> list[DraftCard]:
     """Generate one draft card per channel mapped to `purpose`.
 
-    `senso` is optional. When absent, drafting happens with a direct LLM call on
-    the caller's own key, which is the path every open-source user takes. When
-    present, Senso is used instead so its brand-kit tone retrieval still applies.
+    `sender_profile` is the authed caller's saved user_profile (name, title,
+    links, resume text, ...) and is the only permitted source of the sender's
+    identity in every draft. An empty profile yields neutral placeholders,
+    never an identity taken from retrieved content.
+
+    `senso` is optional. When absent, drafting happens with a direct LLM call
+    on the caller's own key, which is the path every open-source user takes.
+    When present, Senso is used for its brand-kit tone retrieval only: its
+    generated sample is passed to the LLM as a quarantined style reference,
+    and the final draft is always written by the LLM as the caller. Senso
+    output used to be returned verbatim as the draft, which let a workspace
+    knowledge base containing one user's resume write every other user's
+    drafts as that person -- a cross-user PII leak.
 
     `user_id` is the authed caller; required so outreach_log rows are scoped to
     the right user. `logger` is an `outreach.log` module reference or any object
@@ -81,7 +92,7 @@ def generate_drafts(
 
     for channel in channels_for(purpose):
         ct_config = CONTENT_TYPE_CONFIGS.get(channel, {"template": ""})
-        backend_name = "senso.generate" if senso else "llm.generate"
+        backend_name = "senso_tone+llm.generate" if senso else "llm.generate"
         with trace.step(
             session_id,
             backend_name,
@@ -95,13 +106,23 @@ def generate_drafts(
                     job_id = senso.generate_sample(ct_id, full_context)
                     ctx["job_id"] = job_id
                     job = senso.poll_until_done(job_id, timeout_s=30.0, interval_s=1.0)
-                    md = job.get("result", {}).get("raw_markdown", "")
+                    # Senso's sample is tone/style material only. It is never
+                    # returned as the draft: the workspace knowledge base can
+                    # contain another person's resume, so treating its output
+                    # as the message would leak that identity to the caller.
+                    style_reference = job.get("result", {}).get("raw_markdown", "")
                     draft_id = job.get("result", {}).get("content_id", "")
                 else:
                     ct_id = ""
                     job_id = ""
                     draft_id = ""
-                    md = llm_draft.draft_channel(channel, full_context)
+                    style_reference = ""
+                md = llm_draft.draft_channel(
+                    channel,
+                    full_context,
+                    sender_profile=sender_profile,
+                    style_reference=style_reference,
+                )
 
                 ctx["draft_chars"] = len(md)
                 if logger is not None:

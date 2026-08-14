@@ -308,7 +308,10 @@ def list_outreach_log(
 
 
 def generate_outreach(
-    user_id: str, purpose: str, context: str
+    user_id: str,
+    purpose: str,
+    context: str,
+    sender_profile: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate outreach draft cards for a purpose and log each event.
 
@@ -316,6 +319,11 @@ def generate_outreach(
     Senso work; this layer only supplies a Supabase-backed logger and opens a
     session. Senso is optional: when configured it is used for its brand-kit
     tone retrieval, otherwise drafting runs on a direct LLM call.
+
+    `sender_profile` is the caller's saved user_profile as a dict and is the
+    sender identity every draft is written as. When the router does not
+    supply one it is loaded here from user_id, so no caller of this function
+    can generate drafts detached from the caller's own identity.
     """
     try:
         purpose_enum = Purpose(purpose)
@@ -326,6 +334,12 @@ def generate_outreach(
     # draft with a direct LLM call on the caller's own key, which is the path
     # every self-hosted user takes.
     senso = Senso.from_env() if os.environ.get("SENSO_API_KEY") else None
+
+    if sender_profile is None:
+        profile = get_profile(user_id)
+        sender_profile = {
+            k: v for k, v in asdict(profile).items() if k != "user_id"
+        }
 
     session_id = trace.new_session(user_id)
     conn = supabase_client.get_conn()
@@ -338,6 +352,7 @@ def generate_outreach(
             session_id=session_id,
             user_id=user_id,
             logger=logger,
+            sender_profile=sender_profile,
         )
     finally:
         conn.close()

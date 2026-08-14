@@ -187,7 +187,11 @@ def _senso_tone_block(
         return ""
     block_lines = [
         "Reference tone exemplars (from a curated Senso KB of accepted",
-        f"papers similar to {venue.name}; match this register, do NOT quote):",
+        f"papers similar to {venue.name}; match this register, do NOT quote).",
+        "Identity guard: any names, biographies, emails, affiliations,",
+        "credentials, or links inside these exemplars belong to other people.",
+        "Never present them as the author's identity, contact details, or",
+        "achievements, and never copy facts from them into the paper:",
     ]
     for c in chunks[:3]:
         snippet = c.text[:280].strip().replace("\n", " ")
