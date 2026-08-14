@@ -78,8 +78,12 @@ class RepoBundle:
     total_tokens: int
 
 
+# The repo group must allow dots -- user.github.io pages and next.js-style
+# names are real repos -- while still shedding a literal trailing ".git" and
+# stopping at a path segment. The previous pattern excluded dots entirely,
+# which truncated "andrechuabio.github.io" to "andrechuabio" and 404d.
 _REPO_URL_RE = re.compile(
-    r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.\s]+)(?:\.git)?/?"
+    r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?(?=[/\s]|$)"
 )
 
 
