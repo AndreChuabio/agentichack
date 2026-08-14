@@ -18,7 +18,11 @@ function formatScore(score: number): string {
 
 function formatDeadline(deadline?: string | null): string | null {
   if (!deadline) return null;
-  const parsed = new Date(deadline);
+  // A bare YYYY-MM-DD parses as UTC midnight and can display as the prior
+  // local day; anchor it to local midnight like the CFP page does.
+  const parsed = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(deadline) ? `${deadline}T00:00:00` : deadline,
+  );
   if (Number.isNaN(parsed.getTime())) return deadline;
   return parsed.toLocaleDateString(undefined, {
     year: "numeric",

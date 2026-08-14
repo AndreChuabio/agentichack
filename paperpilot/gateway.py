@@ -62,7 +62,14 @@ def get_client() -> OpenAI:
             "set AI_GATEWAY_API_KEY. Get a key at "
             "https://vercel.com/dashboard/ai-gateway"
         )
-    return OpenAI(base_url=GATEWAY_BASE_URL, api_key=api_key)
+    # Bounded rather than the SDK's 600s default: a hung upstream call would
+    # otherwise pin one of the limited worker threads for ten minutes.
+    return OpenAI(
+        base_url=GATEWAY_BASE_URL,
+        api_key=api_key,
+        timeout=180.0,
+        max_retries=1,
+    )
 
 
 DEFAULTS = {

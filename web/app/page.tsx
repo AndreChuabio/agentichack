@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle, CardDescription } from "@/components/ui/Card";
+import { PublicFooter } from "@/components/PublicFooter";
 
 /** The eight USCIS O-1A criteria, shown as the evidence Merit helps you build. */
 const CRITERIA = [
@@ -38,7 +39,7 @@ const PILLARS: ReadonlyArray<{
     tone: "primary",
     title: "Turn your code into contributions",
     description:
-      "Point Merit at a GitHub repo. It drafts a publishable paper and packages a reusable Claude plugin (skills, commands, subagents, MCP) from the same code.",
+      "Point Merit at a GitHub repo. It drafts a publishable paper and packages a reusable Claude plugin (skills, commands, subagents, and an MCP build plan) from the same code.",
     builds: "Builds: scholarly articles, original contributions",
   },
   {
@@ -74,7 +75,7 @@ export default async function Home() {
         <p className="mx-auto mt-5 max-w-xl text-lg text-muted">
           Merit turns your research and open-source work into O-1A evidence.
           Track all eight criteria, generate the papers and tools that count,
-          and walk into your filing with a dossier already done.
+          and walk into your attorney hand-off with the dossier drafted.
         </p>
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link href="/signup">
@@ -129,8 +130,9 @@ export default async function Home() {
           Start building the case for your work
         </h2>
         <p className="mx-auto mt-3 max-w-lg text-sm text-muted">
-          Free to start. Sign up with any email and your evidence is private to
-          you.
+          Free to start: the evidence ledger and per-criterion narratives cost
+          nothing. The attorney-ready dossier PDF is a one-time $99. Your
+          evidence is private to you.
         </p>
         <div className="mt-6 flex justify-center">
           <Link href="/signup">
@@ -138,6 +140,10 @@ export default async function Home() {
           </Link>
         </div>
       </section>
+
+      <div className="mt-16">
+        <PublicFooter />
+      </div>
     </div>
   );
 }

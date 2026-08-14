@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { PublicFooter, SUPPORT_EMAIL } from "@/components/PublicFooter";
 
 export const metadata: Metadata = {
   title: "Privacy policy | Merit",
@@ -35,7 +36,8 @@ export default function PrivacyPage() {
           <p className="mt-2 text-sm text-muted">
             Merit stores immigration evidence, which is sensitive personal
             data. This page states plainly what is stored, what is not, and
-            who it is shared with. No legalese padding.
+            who it is shared with. No legalese padding. Effective 13 August
+            2026.
           </p>
 
           <div className="mt-8 flex flex-col gap-8 text-sm leading-relaxed text-ink">
@@ -108,9 +110,22 @@ export default function PrivacyPage() {
                 Your rights
               </h2>
               <p className="text-muted">
-                You can export your data at any time from the account page,
-                and delete your account and all associated data at any time
-                from the account page.
+                You can export your data at any time from the{" "}
+                <Link
+                  href="/account"
+                  className="font-medium underline-offset-2 hover:text-ink hover:underline"
+                >
+                  account page
+                </Link>
+                , and delete your account and all associated data from the
+                same place. If anything goes wrong with either, email{" "}
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="font-medium underline-offset-2 hover:text-ink hover:underline"
+                >
+                  {SUPPORT_EMAIL}
+                </a>{" "}
+                and we will do it by hand.
               </p>
             </section>
 
@@ -124,9 +139,30 @@ export default function PrivacyPage() {
                 own control.
               </p>
             </section>
+
+            <section className="flex flex-col gap-2">
+              <h2 className="font-display text-lg font-semibold text-ink">
+                Who we are
+              </h2>
+              <p className="text-muted">
+                Merit is an independent software product operated by its
+                founder, Andre Chuabio, in the United States, who is the data
+                controller for the hosted service at meritai.me. For any
+                privacy question or request, email{" "}
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="font-medium underline-offset-2 hover:text-ink hover:underline"
+                >
+                  {SUPPORT_EMAIL}
+                </a>
+                .
+              </p>
+            </section>
           </div>
         </div>
       </main>
+
+      <PublicFooter />
     </div>
   );
 }

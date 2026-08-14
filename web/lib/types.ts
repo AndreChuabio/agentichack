@@ -206,7 +206,12 @@ export interface DraftHandlers {
 /* ----- Assist (Help me) streaming ----- */
 
 /** Which Merit surface the question is asked from. */
-export type AssistSurface = "track" | "productize" | "market";
+export type AssistSurface =
+  | "track"
+  | "productize"
+  | "market"
+  | "publish"
+  | "cfp";
 
 /** Request body for the streaming /assist endpoint. */
 export interface AssistRequest {
@@ -220,4 +225,70 @@ export interface AssistHandlers {
   onDelta: (text: string) => void;
   onDone: () => void;
   onError: (error: string) => void;
+}
+
+/* ----- Publish: portfolio site ----- */
+
+export interface SkippedRepo {
+  repo_url: string;
+  reason: string;
+}
+
+export interface SiteTheme {
+  palette: string;
+  layout: string;
+}
+
+export interface BuildSiteResponse {
+  site_name: string;
+  theme: SiteTheme;
+  html_preview: string;
+  zip_base64: string;
+  skipped: SkippedRepo[];
+  /** The slug the hosted copy is filed under. Stable across rebuilds. */
+  slug: string;
+  /** Where the hosted copy answers once published. A draft 404s here. */
+  public_url: string;
+}
+
+/** One repository as the publish picker offers it. */
+export interface RepoOption {
+  full_name: string;
+  html_url: string;
+  description: string;
+  language: string;
+  stars: number;
+  pushed_at: string;
+  fork: boolean;
+}
+
+/** The caller's repositories, plus whichever they picked last time. */
+export interface ReposResponse {
+  repos: RepoOption[];
+  selected: string[];
+}
+
+/** Where a published site answers. */
+export interface LiveUrlResponse {
+  url: string;
+}
+
+/* ----- Market: profile autofill and resume upload ----- */
+
+/** Whether one pasted link could be read, and why not when it could not. */
+export interface SourceStatus {
+  source: string;
+  ok: boolean;
+  detail: string;
+}
+
+/** Proposed profile values the user accepts field by field. */
+export interface AutofillResponse {
+  proposed: Record<string, string>;
+  sources: SourceStatus[];
+}
+
+/** Text extracted from an uploaded resume, for the user to review. */
+export interface ResumeTextResponse {
+  resume_text: string;
 }

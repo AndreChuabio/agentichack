@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { StepHeader } from "./StepHeader";
+import { LlmKeyField } from "./LlmKeyField";
 import { SummaryEditor } from "./SummaryEditor";
 import { VenueCard } from "./VenueCard";
 import { DraftStream } from "./DraftStream";
@@ -304,6 +305,7 @@ export default function ProductizePage() {
           plugin.
         </p>
         <StepHeader current={currentStep} />
+        <LlmKeyField />
 
         <Card className="flex flex-col gap-3 bg-primary-50/60">
           <CardTitle>Why this helps your O-1A case</CardTitle>

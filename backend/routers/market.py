@@ -7,14 +7,20 @@ Senso generation is delegated to the existing paperpilot.outreach pipeline.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
+from backend import quotas
 from backend.auth import AuthUser, CurrentUser
-from backend.byok import RequireLLMKey
-from backend.services import market_service
+from backend.byok import OptionalLLMKey
+from backend.services import enrich_service, market_service, resume_service
+from paperpilot import trace
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -31,6 +37,7 @@ class ProfileOut(BaseModel):
     scholar_url: str = ""
     site_url: str = ""
     resume_text: str = ""
+    selected_repos: list[str] = Field(default_factory=list)
 
 
 class ProfileUpdate(BaseModel):
@@ -45,6 +52,7 @@ class ProfileUpdate(BaseModel):
     scholar_url: str | None = None
     site_url: str | None = None
     resume_text: str | None = None
+    selected_repos: list[str] | None = None
 
 
 class OutreachGenerateRequest(BaseModel):
@@ -130,6 +138,7 @@ def _profile_out(profile: market_service.Profile) -> ProfileOut:
         scholar_url=profile.scholar_url,
         site_url=profile.site_url,
         resume_text=profile.resume_text,
+        selected_repos=list(profile.selected_repos),
     )
 
 
@@ -153,12 +162,27 @@ def put_profile(
 def generate_outreach(
     body: OutreachGenerateRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
+    _: None = OptionalLLMKey,
 ) -> list[DraftCardOut]:
-    """Generate draft cards for a purpose and log each event for the caller."""
+    """Generate draft cards for a purpose and log each event for the caller.
+
+    The caller's saved profile is loaded here and threaded through the
+    pipeline as the sender identity, so every draft is written as the authed
+    user rather than as whoever the Senso knowledge base happens to describe.
+    An empty profile drafts with neutral placeholders, never an invented or
+    retrieved identity.
+    """
+    quotas.admit(user.id, quotas.OUTREACH)
+    profile = market_service.get_profile(user.id)
+    sender_profile = {
+        k: v for k, v in asdict(profile).items() if k != "user_id"
+    }
     try:
         cards: list[dict[str, Any]] = market_service.generate_outreach(
-            user_id=user.id, purpose=body.purpose, context=body.context
+            user_id=user.id,
+            purpose=body.purpose,
+            context=body.context,
+            sender_profile=sender_profile,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -201,4 +225,92 @@ def record_sent(body: SentRequest, user: AuthUser = CurrentUser) -> None:
         recipient_name=body.recipient_name,
         recipient_contact=body.recipient_contact,
         draft_id=body.draft_id,
+    )
+
+
+class ResumeTextResponse(BaseModel):
+    """Extracted resume text for the user to review before saving."""
+
+    resume_text: str
+
+
+@router.post("/profile/resume", response_model=ResumeTextResponse)
+async def upload_resume(
+    file: UploadFile = File(...),
+    user: AuthUser = CurrentUser,
+) -> ResumeTextResponse:
+    """Extract text from an uploaded PDF or .docx resume.
+
+    Reads at most MAX_BYTES so an oversized upload is refused on the bytes
+    actually received rather than on a content-length header the client set.
+    Does not write the profile: the user reviews the text and saves it.
+
+    Counted against ENRICH alongside autofill. Parsing spends no model call, so
+    the cap is not about token cost -- it bounds an endpoint that otherwise lets
+    one account buffer and parse unlimited multi-megabyte uploads. Counting both
+    enrichment paths in one bucket also keeps the cap meaningful: a limit
+    computed from half the traffic is not a limit.
+    """
+    quotas.enforce(user.id, quotas.ENRICH)
+    session_id = trace.new_session(user.id)
+    with trace.step(session_id, "profile_enrich", user_id=user.id, source="resume") as ctx:
+        data = await file.read(resume_service.MAX_BYTES)
+        text = resume_service.extract_text(file.filename or "", data)
+        ctx["chars"] = len(text)
+    return ResumeTextResponse(resume_text=text)
+
+
+class AutofillRequest(BaseModel):
+    """The links already on the form."""
+
+    github_url: str = ""
+    linkedin_url: str = ""
+    scholar_url: str = ""
+    site_url: str = ""
+
+
+class SourceStatusOut(BaseModel):
+    """Whether one pasted link could be read, and why not when it could not."""
+
+    source: str
+    ok: bool
+    detail: str = ""
+
+
+class AutofillResponse(BaseModel):
+    """Proposed values the user accepts field by field, plus source statuses."""
+
+    proposed: dict[str, str]
+    sources: list[SourceStatusOut]
+
+
+@router.post("/profile/autofill", response_model=AutofillResponse)
+def autofill_profile(
+    body: AutofillRequest,
+    user: AuthUser = CurrentUser,
+) -> AutofillResponse:
+    """Propose profile fields from pasted links. Never writes the profile.
+
+    Individual dead sources are reported inside the result, not raised -- only a
+    failure of the proposal call itself reaches the ladder below.
+
+    No RequireLLMKey: this is capped by quotas.ENRICH and runs on Merit's key.
+    Demanding both a quota and a caller-supplied key was contradictory, and the
+    web client sends no X-LLM-Key header on any request, so it would have made
+    the button unreachable from the browser.
+    """
+    quotas.enforce(user.id, quotas.ENRICH)
+    try:
+        result = enrich_service.autofill(user.id, body.model_dump())
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- surface pipeline errors as 502
+        logger.exception("profile autofill failed for user=%s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Autofill failed: {exc}",
+        ) from exc
+    return AutofillResponse(
+        proposed=result.proposed,
+        sources=[SourceStatusOut(**vars(s)) for s in result.sources],
     )

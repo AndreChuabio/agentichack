@@ -1,7 +1,10 @@
 import { createClient } from "@/lib/supabase/client";
+import { getLlmKey } from "@/lib/llmKey";
 import type {
   AssistHandlers,
   AssistSurface,
+  AutofillResponse,
+  BuildSiteResponse,
   Cfp,
   Citation,
   DraftCard,
@@ -12,12 +15,15 @@ import type {
   EvidenceLedger,
   ExportResult,
   IngestResult,
+  LiveUrlResponse,
   MeResponse,
   OutreachRow,
   PeopleResponse,
   PluginResult,
   Profile,
+  ReposResponse,
   ResearchSummary,
+  ResumeTextResponse,
   SentInput,
   Venue,
 } from "@/lib/types";
@@ -71,6 +77,14 @@ async function authedFetch(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
   };
+  // Sent only when the user has actually set one. The repo-reading surfaces
+  // refuse a request without it; every other surface falls back to Merit's key
+  // and caps the caller instead, so omitting it is a supported state rather
+  // than an error.
+  const llmKey = getLlmKey();
+  if (llmKey) {
+    headers["X-LLM-Key"] = llmKey;
+  }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
@@ -128,14 +142,20 @@ export const api = {
     limit?: number,
     horizonDays?: number,
   ): Promise<Venue[]> {
-    return requestJson<Venue[]>("/match", {
-      method: "POST",
-      body: {
-        summary,
-        ...(limit !== undefined ? { limit } : {}),
-        ...(horizonDays !== undefined ? { horizon_days: horizonDays } : {}),
+    const venues = await requestJson<(Venue & { fit_score?: number })[]>(
+      "/match",
+      {
+        method: "POST",
+        body: {
+          summary,
+          ...(limit !== undefined ? { limit } : {}),
+          ...(horizonDays !== undefined ? { horizon_days: horizonDays } : {}),
+        },
       },
-    });
+    );
+    // The live API names the field fit_score; the UI type uses score.
+    // Accept either so a rename on one side can never render NaN.
+    return venues.map((v) => ({ ...v, score: v.score ?? v.fit_score ?? 0 }));
   },
 
   /** Chronological listing of the shared CFP corpus, with optional filters. */
@@ -163,12 +183,17 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<void> {
     const token = await getAccessToken();
+    // This path builds its own request rather than going through authedFetch,
+    // so the key header has to be repeated here or a BYOK caller would be
+    // metered against Merit's cap while paying for their own inference.
+    const draftKey = getLlmKey();
     const response = await fetch(`${API_BASE_URL}/draft`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        ...(draftKey ? { "X-LLM-Key": draftKey } : {}),
       },
       body: JSON.stringify({ summary, venue }),
       signal,
@@ -246,16 +271,18 @@ export const api = {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        let separatorIndex: number;
-        // SSE messages are separated by a blank line.
-        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          if (rawEvent.trim()) dispatch(rawEvent);
+        // SSE messages are separated by a blank line. The backend emits
+        // CRLF-delimited frames, so accept both \n\n and \r\n\r\n and strip
+        // stray carriage returns before parsing lines.
+        let sep: RegExpExecArray | null;
+        while ((sep = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const rawEvent = buffer.slice(0, sep.index);
+          buffer = buffer.slice(sep.index + sep[0].length);
+          if (rawEvent.trim()) dispatch(rawEvent.replace(/\r/g, ""));
         }
       }
       const tail = buffer.trim();
-      if (tail) dispatch(tail);
+      if (tail) dispatch(tail.replace(/\r/g, ""));
     } catch (err) {
       if ((err as Error)?.name !== "AbortError") {
         handlers.onError((err as Error)?.message ?? "Draft stream aborted");
@@ -357,15 +384,16 @@ export const api = {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        let separatorIndex: number;
-        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          if (rawEvent.trim()) dispatch(rawEvent);
+        // Same CRLF-tolerant framing as the draft stream above.
+        let sep: RegExpExecArray | null;
+        while ((sep = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const rawEvent = buffer.slice(0, sep.index);
+          buffer = buffer.slice(sep.index + sep[0].length);
+          if (rawEvent.trim()) dispatch(rawEvent.replace(/\r/g, ""));
         }
       }
       const tail = buffer.trim();
-      if (tail) dispatch(tail);
+      if (tail) dispatch(tail.replace(/\r/g, ""));
     } catch (err) {
       if ((err as Error)?.name !== "AbortError") {
         handlers.onError((err as Error)?.message ?? "Assist stream aborted");
@@ -446,6 +474,41 @@ export const api = {
     },
   },
 
+  publish: {
+    /** Build a portfolio site from the caller's profile, repos, and chosen evidence. */
+    async buildSite(
+      repoUrls: string[],
+      evidenceIds: string[],
+    ): Promise<BuildSiteResponse> {
+      return requestJson<BuildSiteResponse>("/publish/site", {
+        method: "POST",
+        body: { repo_urls: repoUrls, evidence_ids: evidenceIds },
+      });
+    },
+
+    /** The caller's GitHub repos for the picker, plus their last selection. */
+    async listRepos(): Promise<ReposResponse> {
+      return requestJson<ReposResponse>("/publish/repos");
+    },
+
+    /** Make the built site public. Returns the URL it now answers on. */
+    async goLive(): Promise<LiveUrlResponse> {
+      return requestJson<LiveUrlResponse>("/publish/site/live", {
+        method: "POST",
+      });
+    },
+
+    /** Take the site down and delete the stored HTML. */
+    async takeDown(): Promise<void> {
+      const response = await authedFetch("/publish/site/live", {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
+    },
+  },
+
   async dossier(): Promise<Blob> {
     const response = await authedFetch("/dossier", {
       method: "POST",
@@ -471,6 +534,20 @@ export const api = {
       return requestJson<{ url: string }>("/billing/checkout", {
         method: "POST",
       });
+    },
+  },
+
+  account: {
+    /** Everything Merit stores about the caller, grouped by table. */
+    async export(): Promise<Record<string, unknown>> {
+      return requestJson<Record<string, unknown>>("/account/export");
+    },
+    /** Delete the caller's account; every per-user row cascades away. */
+    async remove(): Promise<void> {
+      const response = await authedFetch("/account", { method: "DELETE" });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
     },
   },
 
@@ -508,6 +585,38 @@ export const api = {
         method: "POST",
         body: { purpose, context },
       });
+    },
+
+    /**
+     * Propose profile fields from the caller's pasted links.
+     * Never writes the profile: the user accepts fields one at a time.
+     */
+    async autofillProfile(urls: {
+      github_url: string;
+      linkedin_url: string;
+      scholar_url: string;
+      site_url: string;
+    }): Promise<AutofillResponse> {
+      return requestJson<AutofillResponse>("/market/profile/autofill", {
+        method: "POST",
+        body: urls,
+      });
+    },
+
+    /** Multipart, so this bypasses requestJson but still uses the shared token. */
+    async uploadResume(file: File): Promise<ResumeTextResponse> {
+      const token = await getAccessToken();
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${API_BASE_URL}/market/profile/resume`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!response.ok) {
+        throw new ApiError(response.status, await safeErrorDetail(response));
+      }
+      return (await response.json()) as ResumeTextResponse;
     },
 
     async logSent(input: SentInput): Promise<void> {

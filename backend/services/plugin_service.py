@@ -31,14 +31,22 @@ from paperpilot.skill_extract import PluginPack, extract_plugin
 from paperpilot.skill_render import build_plugin_zip, render_plugin_manifest
 
 
-def fetch_repo_bundle(repo_url: str) -> str:
+def fetch_repo_bundle(repo_url: str, token_cap: int | None = None) -> str:
     """Fetch a repo from GitHub and render it into the text sent to the LLM.
 
     Wraps github_ingest.fetch_repo + render_bundle so callers (and tests) can
     treat "get me the bundle text for this repo" as one step, regardless of
     whether it is served from cache or fetched fresh.
+
+    ``token_cap`` overrides the 600K default for callers that read several repos
+    into one prompt. Plugin extraction reads one repo and wants everything;
+    a portfolio site reads up to eight and only needs enough to describe each,
+    and eight full bundles would be ~4.8M tokens -- past the model's context
+    window, so the call fails outright rather than merely costing a fortune.
     """
-    return render_bundle(fetch_repo(repo_url))
+    if token_cap is None:
+        return render_bundle(fetch_repo(repo_url))
+    return render_bundle(fetch_repo(repo_url, token_cap=token_cap))
 
 
 def _load_bundle(session_id: str, user_id: str, repo_url: str) -> str:

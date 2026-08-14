@@ -48,3 +48,11 @@ submission/*.out
 *-backup
 *.demo-backup
 *.concern-backup
+.vercel
+.agents/
+
+# Agent session tooling -- never commit
+.claude/
+.playwright-mcp/
+skills-lock.json
+HANDOFF-*.md

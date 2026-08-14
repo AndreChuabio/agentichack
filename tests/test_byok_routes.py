@@ -1,9 +1,16 @@
-"""Pins RequireLLMKey to the production BYOK routes.
+"""Pins which routes demand the caller's own key and which fall back to Merit's.
 
-If `_: None = RequireLLMKey` is ever removed from one of these route
-signatures, this test catches it: the request would stop being rejected for
-a missing X-LLM-Key header. Auth is overridden so the assertion is purely
-about the key requirement, not the caller's identity.
+The line is cost, not convenience. Reading a repo is input-token dominated --
+github_ingest caps a bundle at 600K tokens -- so a surge of users on Merit's key
+is a bill with no natural ceiling, and those two routes keep RequireLLMKey.
+Drafting an email, drafting a section and embedding a summary are all bounded at
+a few hundred output tokens, so Merit absorbs them (capped by quotas.admit) and
+the product works on first visit rather than 400ing at a key field that does not
+exist in the UI.
+
+Both halves are pinned, because either drifting is a real failure: a repo read
+falling back to Merit's key is an uncapped bill, and a cheap route demanding a
+key is a dead button.
 """
 
 from fastapi.testclient import TestClient
@@ -21,28 +28,23 @@ _RESEARCH_SUMMARY = {
     "limitations": "l",
 }
 
+# Expensive: a 600K-token repo bundle per call. These must keep rejecting.
 _BYOK_ROUTES = [
     ("POST", "/ingest", {"repo_url": "https://github.com/octocat/hello"}),
-    (
-        "POST",
-        "/draft",
-        {
-            "summary": _RESEARCH_SUMMARY,
-            "venue": {"name": "ICML"},
-        },
-    ),
     ("POST", "/extract-plugin", {"repo_url": "https://github.com/octocat/hello"}),
+]
+
+# Cheap: output-bounded at a few hundred tokens. These must NOT reject, or the
+# button is unreachable from a web client that sends no key header.
+_FALLBACK_ROUTES = [
+    ("POST", "/draft", {"summary": _RESEARCH_SUMMARY, "venue": {"name": "ICML"}}),
     ("POST", "/match", {"summary": _RESEARCH_SUMMARY}),
-    (
-        "POST",
-        "/market/outreach/generate",
-        {"purpose": "CAREER", "context": "ctx"},
-    ),
+    ("POST", "/market/outreach/generate", {"purpose": "CAREER", "context": "ctx"}),
 ]
 
 
-def test_byok_routes_reject_missing_key():
-    """Each production BYOK route 400s without an X-LLM-Key header."""
+def test_expensive_routes_still_reject_a_missing_key():
+    """The repo-reading routes 400 without an X-LLM-Key header."""
     app.dependency_overrides[get_current_user] = lambda: _USER
     try:
         with TestClient(app) as client:
@@ -53,6 +55,26 @@ def test_byok_routes_reject_missing_key():
                     "without X-LLM-Key"
                 )
                 assert "X-LLM-Key" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_cheap_routes_do_not_demand_a_key():
+    """The output-bounded routes must not 400 for a missing key.
+
+    The web client sends X-LLM-Key on no request and no screen collects one, so
+    a 400 here is a permanently dead button rather than a prompt to supply
+    something.
+    """
+    app.dependency_overrides[get_current_user] = lambda: _USER
+    try:
+        with TestClient(app) as client:
+            for method, path, body in _FALLBACK_ROUTES:
+                resp = client.request(method, path, json=body)
+                assert resp.status_code != 400 or "X-LLM-Key" not in resp.text, (
+                    f"{method} {path} refused for a missing key; it runs on "
+                    "Merit's key and is capped instead"
+                )
     finally:
         app.dependency_overrides.clear()
 

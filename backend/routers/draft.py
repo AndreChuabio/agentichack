@@ -28,7 +28,8 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
 from backend.auth import AuthUser, CurrentUser
-from backend.byok import RequireLLMKey
+from backend import quotas
+from backend.byok import OptionalLLMKey
 from backend.services.draft_service import draft_paper_supabase
 from paperpilot import trace
 from paperpilot.draft import SECTIONS, DraftSection
@@ -77,7 +78,7 @@ def _section_payload(section: DraftSection) -> dict[str, Any]:
 async def draft(
     req: DraftRequest,
     user: AuthUser = CurrentUser,
-    _: None = RequireLLMKey,
+    _: None = OptionalLLMKey,
 ) -> EventSourceResponse:
     """Stream the paper draft section-by-section as Server-Sent Events.
 
@@ -85,6 +86,10 @@ async def draft(
     supply one, bound to the authenticated user so trace rows are
     tenant-scoped.
     """
+    # Output-bounded at 900 tokens a section, so Merit absorbs it for callers
+    # who brought no key of their own -- capped, because absorbing it is not the
+    # same as absorbing it without limit.
+    quotas.admit(user.id, quotas.DRAFT)
     session_id = req.session_id or trace.new_session(user.id)
     venue_dict = req.venue.model_dump()
 

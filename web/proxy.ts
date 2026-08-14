@@ -6,7 +6,14 @@ import { NextResponse, type NextRequest } from "next/server";
  * Refreshes the Supabase session on every request and redirects
  * unauthenticated users away from the protected (app) routes to /login.
  */
-const PROTECTED_PREFIXES = ["/productize", "/track", "/market", "/cfp"];
+const PROTECTED_PREFIXES = [
+  "/market",
+  "/productize",
+  "/track",
+  "/publish",
+  "/cfp",
+  "/account",
+];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -15,6 +22,18 @@ export async function proxy(request: NextRequest) {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey) {
+    // Fail closed: a deploy missing the Supabase env must not serve the
+    // gated shell to anonymous visitors. Public routes still pass through.
+    const pathname = request.nextUrl.pathname;
+    const gated = PROTECTED_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+    if (gated) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
     return response;
   }
 

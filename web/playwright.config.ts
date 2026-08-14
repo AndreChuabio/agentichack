@@ -5,7 +5,17 @@ import { defineConfig, devices } from "@playwright/test";
  * vars -- no live Supabase project is required. Unauthenticated requests to
  * Supabase resolve to a null user rather than throwing, so auth-gated pages
  * correctly redirect to /login without a real backend.
+ *
+ * The port is overridable because `reuseExistingServer` will happily adopt
+ * whatever is already listening. On a machine running another Next project on
+ * 3000, the entire suite silently runs against that app: every assertion about
+ * Merit's copy fails and any assertion loose enough to pass on a stranger's
+ * 404 page passes. Set PLAYWRIGHT_PORT to something unused, and see
+ * e2e/harness.spec.ts, which fails loudly if the server under test is not Merit.
  */
+const PORT = process.env.PLAYWRIGHT_PORT ?? "3000";
+const BASE_URL = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -14,7 +24,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: BASE_URL,
     trace: "on-first-retry",
   },
   projects: [
@@ -31,8 +41,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
-    url: "http://localhost:3000",
+    command: `npm run dev -- --port ${PORT}`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     env: {

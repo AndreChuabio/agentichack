@@ -233,13 +233,32 @@ def draft_narrative(
 def build_dossier(
     req: DossierRequest | None = None, user: AuthUser = CurrentUser
 ) -> Response:
-    """Build the O-1A evidence dossier PDF and return it as application/pdf."""
-    quotas.enforce(user.id, quotas.DOSSIER)
-    if not entitlements.has_entitlement(user.id, entitlements.DOSSIER):
+    """Build the O-1A evidence dossier PDF and return it as application/pdf.
+
+    Entitlement is checked before the quota, and the quota that applies depends
+    on who is paying. A customer who bought the unlock hitting a 429 that blames
+    Merit's API key cap is both wrong and insulting, so paying callers get an
+    abuse ceiling instead of the free cost cap. When the paywall is dark
+    (STRIPE_PRICE_DOSSIER unset) every caller is entitled and Merit is still
+    paying, so the free cap stays in force.
+    """
+    paywalled = entitlements.billing_enabled(entitlements.DOSSIER)
+    try:
+        entitled = entitlements.has_entitlement(user.id, entitlements.DOSSIER)
+    except Exception as exc:  # noqa: BLE001
+        # A ledger blip must not read as a bare 500 on a download somebody paid
+        # for. Say what failed and that retrying is the right move.
+        logger.exception("entitlement lookup failed for user=%s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="We could not verify your purchase. Please try again.",
+        ) from exc
+    if not entitled:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Unlock the full dossier to download it.",
         )
+    quotas.enforce(user.id, quotas.DOSSIER_PAID if paywalled else quotas.DOSSIER)
     session_id = req.session_id if req else None
     try:
         pdf_bytes = evidence_service.build_dossier(user.id, session_id=session_id)

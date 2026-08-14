@@ -1,10 +1,28 @@
-"""Outreach drafting works with an LLM key alone, no Senso account."""
+"""Outreach drafting works with an LLM key alone, no Senso account.
+
+Also pins the cross-user identity contract: every prompt presents the authed
+caller's profile as the sender, carries the identity guard against retrieved
+knowledge-base content, and an empty profile yields neutral placeholders
+rather than an identity borrowed from the knowledge base.
+"""
 
 import pytest
 
 from paperpilot.outreach import llm_draft
 from paperpilot.outreach.orchestrator import generate_drafts
 from paperpilot.outreach.purpose import Purpose
+
+QA_PROFILE = {
+    "name": "QA Tester",
+    "title": "QA Engineer",
+    "site_url": "https://qa-tester.example.com",
+    "resume_text": "Five years of release QA across fintech platforms.",
+}
+
+ANDRE_PROFILE = {
+    "name": "Andre Chuabio",
+    "title": "Data Scientist",
+}
 
 
 class _FakeCompletions:
@@ -64,6 +82,93 @@ def test_generate_drafts_needs_no_senso(monkeypatch):
     assert len(cards) == 2
     assert all(c.markdown == "hello there" for c in cards)
     assert all(c.error is None for c in cards)
+
+
+def _prompt_of(fake):
+    """Return the user-message prompt captured by a _FakeClient."""
+    return fake.chat.completions.calls[0]["messages"][1]["content"]
+
+
+def test_prompt_presents_caller_profile_as_sender(monkeypatch):
+    """The caller's saved profile is the sender identity in the prompt."""
+    fake = _FakeClient()
+    monkeypatch.setattr(llm_draft, "get_client", lambda: fake)
+
+    llm_draft.draft_channel("linkedin_dm", "ctx", sender_profile=QA_PROFILE)
+
+    prompt = _prompt_of(fake)
+    assert "Sender profile (the message is written by this person" in prompt
+    assert "QA Tester" in prompt
+    assert "QA Engineer" in prompt
+    assert "https://qa-tester.example.com" in prompt
+    assert "Five years of release QA" in prompt
+
+
+def test_prompt_carries_identity_guard(monkeypatch):
+    """The KB-identity guard is present whether or not a profile exists."""
+    for profile in (QA_PROFILE, None):
+        fake = _FakeClient()
+        monkeypatch.setattr(llm_draft, "get_client", lambda f=fake: f)
+        llm_draft.draft_channel("linkedin_dm", "ctx", sender_profile=profile)
+        prompt = _prompt_of(fake)
+        assert llm_draft.IDENTITY_GUARD in prompt
+        assert "are NOT the sender's" in prompt
+
+
+def test_different_profiles_yield_different_senders(monkeypatch):
+    """Two users' prompts each carry only their own identity."""
+    fake_a = _FakeClient()
+    monkeypatch.setattr(llm_draft, "get_client", lambda: fake_a)
+    llm_draft.draft_channel("linkedin_dm", "ctx", sender_profile=QA_PROFILE)
+
+    fake_b = _FakeClient()
+    monkeypatch.setattr(llm_draft, "get_client", lambda: fake_b)
+    llm_draft.draft_channel("linkedin_dm", "ctx", sender_profile=ANDRE_PROFILE)
+
+    prompt_a = _prompt_of(fake_a)
+    prompt_b = _prompt_of(fake_b)
+    assert "QA Tester" in prompt_a
+    assert "Andre Chuabio" not in prompt_a
+    assert "Andre Chuabio" in prompt_b
+    assert "QA Tester" not in prompt_b
+
+
+def test_empty_profile_uses_placeholders_not_kb_identity(monkeypatch):
+    """No profile means neutral placeholders, never an invented identity."""
+    for profile in (None, {}, {"name": "", "title": ""}):
+        fake = _FakeClient()
+        monkeypatch.setattr(llm_draft, "get_client", lambda f=fake: f)
+        llm_draft.draft_channel("linkedin_dm", "ctx", sender_profile=profile)
+        prompt = _prompt_of(fake)
+        assert "[Your name]" in prompt
+        assert "Do not invent a name" in prompt
+        assert llm_draft.IDENTITY_GUARD in prompt
+
+
+def test_style_reference_is_quarantined(monkeypatch):
+    """Retrieved tone material is framed as style only, with the guard."""
+    fake = _FakeClient()
+    monkeypatch.setattr(llm_draft, "get_client", lambda: fake)
+
+    kb_text = "I am Andre Chuabio, M.S. candidate, reach me at AC233@Fordham.edu"
+    llm_draft.draft_channel(
+        "linkedin_dm", "ctx", sender_profile=QA_PROFILE, style_reference=kb_text
+    )
+
+    prompt = _prompt_of(fake)
+    assert "use for tone, register, and formatting only" in prompt
+    assert "<style-reference>" in prompt
+    assert kb_text in prompt
+    assert "belonging to someone else" in prompt
+    assert llm_draft.IDENTITY_GUARD in prompt
+
+
+def test_system_prompt_forbids_kb_identity():
+    """The system prompt itself blocks retrieved content as identity source."""
+    assert (
+        "never a source of the sender's identity" in llm_draft._SYSTEM_PROMPT
+    )
+    assert "sender profile" in llm_draft._SYSTEM_PROMPT
 
 
 def test_one_channel_failing_does_not_cancel_the_others(monkeypatch):

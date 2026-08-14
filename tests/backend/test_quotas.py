@@ -58,14 +58,23 @@ def test_assist_quota_is_daily_twenty(monkeypatch):
     assert quotas.ASSIST.window_days == 1
 
 
-def test_ledger_failure_fails_open(monkeypatch):
-    """If the ledger cannot be read, do not lock the user out of their own data."""
+def test_ledger_failure_fails_closed_with_retryable_503(monkeypatch):
+    """An unreadable ledger must refuse, not over-serve.
+
+    Every quota guards a Merit-funded surface, and the ledger becomes
+    unreadable exactly at peak load -- failing open there disengages the
+    cost control at the worst possible moment. Reading stored evidence is
+    never quota-gated, so the caller keeps access to their own data.
+    """
 
     def boom(*args, **kwargs):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(quotas, "user_event_count", boom)
-    quotas.enforce("user-1", quotas.DOSSIER)  # must not raise
+    with pytest.raises(HTTPException) as exc_info:
+        quotas.enforce("user-1", quotas.DOSSIER)
+    assert exc_info.value.status_code == 503
+    assert "try again" in exc_info.value.detail.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +473,95 @@ def test_dossier_route_blocks_at_quota(monkeypatch):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# The paid dossier: entitlement is checked before the quota, and which quota
+# applies depends on who is paying for the call.
+#
+# The original order ran the free 3-per-30-days cap first, so a customer who
+# had paid $99 and regenerated a fourth time was told they had exhausted a cap
+# that exists to bound Merit's API spend -- on a surface they were funding
+# themselves. And has_entitlement had no error handling, so a Supabase blip
+# surfaced as a bare 500 on the download somebody had just paid for.
+# ---------------------------------------------------------------------------
+
+
+def _paid_dossier_route(monkeypatch, *, entitled: bool, lookup_raises: bool = False):
+    """Wire the dossier route with billing live and a stubbed ledger."""
+    from paperpilot import supabase_client as sc
+
+    monkeypatch.setenv("STRIPE_PRICE_DOSSIER", "price_live_123")
+
+    def has_paid_product(user_id, product, conn=None):
+        if lookup_raises:
+            raise RuntimeError("supabase down")
+        return entitled
+
+    monkeypatch.setattr(sc, "has_paid_product", has_paid_product)
+    monkeypatch.setattr(
+        evidence_service, "build_dossier", lambda *a, **k: b"%PDF-1.4 fake"
+    )
+    monkeypatch.setattr(evidence_service, "dossier_filename", lambda user_id: "d.pdf")
+
+    seen: list = []
+    monkeypatch.setattr(quotas, "enforce", lambda user_id, quota: seen.append(quota))
+    return seen
+
+
+def _post_dossier():
+    app.dependency_overrides[get_current_user] = lambda: _USER
+    try:
+        with TestClient(app) as client:
+            return client.post("/dossier")
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_unpaid_caller_gets_402_and_the_quota_is_never_consulted(monkeypatch):
+    seen = _paid_dossier_route(monkeypatch, entitled=False)
+    resp = _post_dossier()
+    assert resp.status_code == 402
+    assert seen == [], "an unpaid caller must not burn a quota slot"
+
+
+def test_paying_caller_gets_the_abuse_ceiling_not_the_free_cap(monkeypatch):
+    seen = _paid_dossier_route(monkeypatch, entitled=True)
+    resp = _post_dossier()
+    assert resp.status_code == 200
+    assert seen == [quotas.DOSSIER_PAID], (
+        "a customer who paid $99 must not hit the 3-per-month cap that exists "
+        "to bound Merit's own API spend"
+    )
+    assert quotas.DOSSIER_PAID.limit == 30
+
+
+def test_free_dossier_keeps_the_merit_cost_cap_while_the_paywall_is_dark(monkeypatch):
+    """No price configured means Merit is still paying, so the free cap stands.
+
+    has_entitlement returns True for everyone when billing is disabled, so
+    gating the higher ceiling on entitlement alone would silently remove the
+    cost cap the moment the paywall shipped dark.
+    """
+    monkeypatch.delenv("STRIPE_PRICE_DOSSIER", raising=False)
+    monkeypatch.setattr(
+        evidence_service, "build_dossier", lambda *a, **k: b"%PDF-1.4 fake"
+    )
+    monkeypatch.setattr(evidence_service, "dossier_filename", lambda user_id: "d.pdf")
+    seen: list = []
+    monkeypatch.setattr(quotas, "enforce", lambda user_id, quota: seen.append(quota))
+
+    resp = _post_dossier()
+
+    assert resp.status_code == 200
+    assert seen == [quotas.DOSSIER]
+
+
+def test_entitlement_lookup_failure_is_a_clear_503_not_a_bare_500(monkeypatch):
+    _paid_dossier_route(monkeypatch, entitled=True, lookup_raises=True)
+    resp = _post_dossier()
+    assert resp.status_code == 503
+    assert "verify your purchase" in resp.json()["detail"]
 
 
 def test_narrative_route_blocks_at_quota(monkeypatch):

@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "qa:live": "node qa/run-live.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.209",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
+    "@vercel/analytics": "^2.0.1",
     "ai": "^6.0.207",
     "next": "16.2.9",
     "react": "19.2.4",

@@ -11,6 +11,8 @@ import { Spinner } from "@/components/ui/Spinner";
 function surfaceForPath(pathname: string): AssistSurface {
   if (pathname.startsWith("/productize")) return "productize";
   if (pathname.startsWith("/market")) return "market";
+  if (pathname.startsWith("/publish")) return "publish";
+  if (pathname.startsWith("/cfp")) return "cfp";
   return "track";
 }
 
@@ -50,6 +52,26 @@ const SURFACE_COPY: Record<AssistSurface, SurfaceCopy> = {
       "Who should I reach out to for my O-1A case?",
       "How do recommendation letters fit the criteria?",
       "What makes outreach for judging or media effective?",
+    ],
+  },
+  publish: {
+    label: "Publish",
+    intro:
+      "Publish turns your repos and profile into a hosted portfolio site with a public link. Ask me how a portfolio strengthens your case.",
+    prompts: [
+      "How does a portfolio site help my O-1A case?",
+      "What should my portfolio lead with?",
+      "Who should I share my published site with?",
+    ],
+  },
+  cfp: {
+    label: "Call for Papers",
+    intro:
+      "These are venues and deadlines where you can submit your paper. A published paper becomes evidence you can Track. Ask me where to submit.",
+    prompts: [
+      "Which venue should I submit my work to first?",
+      "How does presenting at a conference help my case?",
+      "What is the difference between a workshop and a full paper?",
     ],
   },
 };
