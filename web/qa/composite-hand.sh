@@ -57,6 +57,13 @@ panel_x="${panel_xy%,*}";  panel_y="${panel_xy#*,}"
 #   [panel] dark panel + UI at true width, letterboxed, placed under the phone
 #   [keyed] the plate again with green turned transparent -- everything except
 #           the screen is opaque, so it covers the panel's overshoot exactly
+# The keyed layer is CROPPED to the panel rectangle before it is used, so only
+# pixels inside the phone's zone can ever become transparent. Generated plates
+# render screen GLOW -- near-pure green bloom past the bezel onto skin and
+# background -- and bloom keys at any similarity, opening UI-shaped holes in
+# the scene. Confining the key to the panel makes the rest of the frame
+# untouchable by construction. despill then neutralises the fringe the key
+# leaves at the bezel edge.
 ffmpeg -hide_banner -loglevel error \
   -i "$plate" -i "$ui" \
   -filter_complex "\
@@ -65,8 +72,9 @@ ffmpeg -hide_banner -loglevel error \
     color=c=0x111111:s=${panel_wxh}[bg]; \
     [bg][uiw]overlay=(W-w)/2:(H-h)/2:shortest=1[panel]; \
     [base][panel]overlay=${panel_x}:${panel_y}[with_ui]; \
-    [for_key]format=rgba,colorkey=${key}:${similarity}:0.05[keyed]; \
-    [with_ui][keyed]overlay=0:0[outv]" \
+    [for_key]format=rgba,colorkey=${key}:${similarity}:0.15,crop=${panel_w}:${panel_h}:${panel_x}:${panel_y}[keyzone]; \
+    [with_ui][keyzone]overlay=${panel_x}:${panel_y}[merged]; \
+    [merged]despill=type=green[outv]" \
   -map "[outv]" -map "0:a?" \
   -c:v libx264 -pix_fmt yuv420p -crf 19 -preset medium -c:a copy \
   "$out" -y
