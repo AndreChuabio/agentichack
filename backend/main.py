@@ -52,7 +52,7 @@ from paperpilot.llm_ingest import ResearchSummary  # noqa: E402
 
 # Bumped on every deploy that changes behaviour. Reported by /health so a
 # rollout can be confirmed rather than assumed.
-BUILD = "0.3.4-dotted-repo-names"
+BUILD = "0.3.5-lead-contact-resolve"
 
 app = FastAPI(title="Merit API", version=BUILD)
 

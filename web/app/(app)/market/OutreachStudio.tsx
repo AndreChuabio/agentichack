@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { PersonLead } from "@/lib/types";
+import type { ContactResult, PersonLead } from "@/lib/types";
 import {
   Badge,
   Button,
@@ -217,11 +217,47 @@ export function OutreachStudio({ onStepChange }: OutreachStudioProps) {
 
   // Key of the lead currently chosen as recipient, so we can mark it.
   const [selectedLeadKey, setSelectedLeadKey] = useState<string | null>(null);
+  // Key of the lead whose page we are currently reading for a contact.
+  const [resolvingKey, setResolvingKey] = useState<string | null>(null);
+  // Per-lead outcome of opening the page, keyed the same as the rows.
+  const [contacts, setContacts] = useState<Record<string, ContactResult>>({});
 
-  function selectLead(lead: PersonLead, key: string) {
-    setToName(lead.name);
-    if (lead.email) setToEmail(lead.email);
+  /**
+   * Select a lead and go find a real address on its page.
+   *
+   * A search hit is a page, not a person: its title is a headline and its
+   * snippet almost never contains an email. So we never copy the title into
+   * the recipient name, and we open the page to look for the contact instead
+   * of leaving the caller with an empty email field.
+   */
+  async function selectLead(lead: PersonLead, key: string) {
     setSelectedLeadKey(key);
+    if (lead.name) setToName(lead.name);
+    if (lead.email) setToEmail(lead.email);
+    if (!lead.url) return;
+    setResolvingKey(key);
+    try {
+      const found = await api.market.resolveContact(lead.url);
+      setContacts((prev) => ({ ...prev, [key]: found }));
+      if (found.email) setToEmail(found.email);
+      if (found.name) setToName(found.name);
+    } catch (err: unknown) {
+      setContacts((prev) => ({
+        ...prev,
+        [key]: {
+          found: false,
+          email: "",
+          emails: [],
+          name: "",
+          reason:
+            err instanceof Error
+              ? err.message
+              : "Could not read that page. Open it and copy the address in.",
+        },
+      }));
+    } finally {
+      setResolvingKey((current) => (current === key ? null : current));
+    }
   }
 
   function bodyFor(card: DraftCardView, key: string): string {
@@ -440,13 +476,18 @@ export function OutreachStudio({ onStepChange }: OutreachStudioProps) {
             ) : (
               <>
                 <p className="mb-2 text-xs text-muted">
-                  Leads from the web. Open one to find a contact, then select
-                  it as the recipient. Vet before reaching out.
+                  Pages from the web, not vetted contacts. Select one and we
+                  read it for an address. Check the page before reaching out.
                 </p>
                 <ul className="flex flex-col divide-y divide-black/5">
                   {people.map((lead, i) => {
                     const leadKey = `${lead.url}-${i}`;
                     const selected = selectedLeadKey === leadKey;
+                    const resolving = resolvingKey === leadKey;
+                    const contact = contacts[leadKey];
+                    // The snippet email is a lucky pre-fill; the resolved one
+                    // came from the page body and wins when both exist.
+                    const shownEmail = contact?.email || lead.email || "";
                     return (
                       <li
                         key={leadKey}
@@ -454,7 +495,7 @@ export function OutreachStudio({ onStepChange }: OutreachStudioProps) {
                       >
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-ink">
-                            {lead.name}
+                            {lead.title || lead.name || lead.url}
                           </p>
                           {lead.detail ? (
                             <p className="line-clamp-2 text-xs text-muted">
@@ -462,10 +503,14 @@ export function OutreachStudio({ onStepChange }: OutreachStudioProps) {
                             </p>
                           ) : null}
                           <div className="mt-1 flex flex-wrap items-center gap-2">
-                            {lead.email ? (
-                              <Badge tone="success">{lead.email}</Badge>
+                            {resolving ? (
+                              <Badge tone="neutral">reading page...</Badge>
+                            ) : shownEmail ? (
+                              <Badge tone="success">{shownEmail}</Badge>
+                            ) : contact ? (
+                              <Badge tone="neutral">no email on page</Badge>
                             ) : (
-                              <Badge tone="neutral">no email found</Badge>
+                              <Badge tone="neutral">email not checked yet</Badge>
                             )}
                             {lead.url ? (
                               <a
@@ -478,15 +523,40 @@ export function OutreachStudio({ onStepChange }: OutreachStudioProps) {
                               </a>
                             ) : null}
                           </div>
+                          {contact && !contact.found && contact.reason ? (
+                            <p className="mt-1 text-xs text-muted">
+                              {contact.reason}
+                            </p>
+                          ) : null}
+                          {contact && contact.emails.length > 1 ? (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs text-muted">
+                                Also on the page:
+                              </span>
+                              {contact.emails.slice(1).map((addr) => (
+                                <button
+                                  key={addr}
+                                  type="button"
+                                  onClick={() => setToEmail(addr)}
+                                  className="rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary hover:text-white"
+                                >
+                                  {addr}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                         {selected ? (
-                          <Badge tone="primary">Selected</Badge>
+                          <Badge tone="primary">
+                            {resolving ? "Checking" : "Selected"}
+                          </Badge>
                         ) : (
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => selectLead(lead, leadKey)}
+                            disabled={resolvingKey !== null}
+                            onClick={() => void selectLead(lead, leadKey)}
                           >
                             Select
                           </Button>

@@ -23,6 +23,45 @@ from paperpilot.outreach.senso import Senso
 # Loose email matcher for pulling a contact out of a web-search snippet.
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
+# Addresses that match _EMAIL_RE on a scraped page but are never a human to
+# write to: bounce mailboxes, doc placeholders, tracking hosts, and the
+# `sprite@2x.png` style filenames that a naive email regex happily accepts.
+_JUNK_EMAIL_RE = re.compile(
+    r"(^|@)(no-?reply|donotreply|postmaster|mailer-daemon)"
+    r"|@(example|test|localhost|sentry\.io|wixpress\.com|domain\.com)"
+    r"|\.(png|jpe?g|gif|webp|svg|css|js|woff2?)$"
+    r"|@\d+\.\d+",
+    re.I,
+)
+
+# Local parts that are a desk rather than a person. Still offered, but ranked
+# below a named address so "Select" prefers a human where one exists.
+_ROLE_LOCALPARTS = frozenset(
+    {
+        "info", "contact", "admin", "support", "hello", "office", "help",
+        "enquiries", "enquiry", "inquiries", "editor", "editorial", "press",
+        "media", "sales", "team", "mail", "webmaster", "journals", "library",
+        "permissions", "privacy", "legal", "security", "abuse", "careers",
+        "jobs", "hr", "marketing", "billing", "orders", "service", "services",
+    }
+)
+
+# Common on-page obfuscation, unwrapped before the email regex runs.
+_DEOBFUSCATE = (
+    ("&#64;", "@"), ("&commat;", "@"), ("%40", "@"),
+    ("[at]", "@"), ("(at)", "@"), ("{at}", "@"),
+    ("[dot]", "."), ("(dot)", "."), ("{dot}", "."),
+)
+
+# Words that sit next to the address a paper actually wants you to write to.
+_CORRESPONDING_RE = re.compile(
+    r"correspond|corresponding author|reprint|contact author|for inquiries",
+    re.I,
+)
+
+# Keys a page-extract payload may carry an author name under.
+_AUTHOR_KEYS = ("author", "authors", "byline", "creator", "publisher_name")
+
 # Per-purpose phrasing that turns the user's context into a people-finding query.
 _PEOPLE_QUERY: dict[str, str] = {
     "VISA": "experts, reference-letter writers, and program organizers in",
@@ -254,21 +293,153 @@ def suggest_people(
     qualifier = _PEOPLE_QUERY.get(
         purpose.upper(), "people and organizations working on"
     )
-    query = f"{qualifier} {context}".strip()
+    # "contact email" biases the result set toward pages that actually carry a
+    # reachable address (faculty pages, lab sites, corresponding-author blocks)
+    # instead of bare article landing pages.
+    query = f"{qualifier} {context} contact email".strip()
     session_id = trace.new_session(user_id)
     hits = nimble_client.search(query, session_id, k=limit) or []
     people: list[dict[str, str]] = []
     for hit in hits:
-        emails = _EMAIL_RE.findall(hit.snippet or "")
+        emails = _usable_emails(hit.snippet or "")
         people.append(
             {
-                "name": hit.title,
+                # `title` is the page, `name` is a human. A search hit gives us
+                # the former and almost never the latter, so name stays empty
+                # unless resolve_contact finds a real one -- writing a page
+                # title into the recipient field is what this separation fixes.
+                "name": "",
+                "title": hit.title,
                 "detail": hit.snippet,
                 "url": hit.url,
                 "email": emails[0] if emails else "",
             }
         )
     return {"configured": True, "people": people, "reason": ""}
+
+
+def _usable_emails(text: str) -> list[str]:
+    """Pull plausible human-reachable emails out of page or snippet text.
+
+    De-obfuscates the common `name [at] domain` and HTML-entity forms first,
+    drops bounce mailboxes, doc placeholders, and image filenames that the
+    loose email regex otherwise accepts, then de-duplicates case-insensitively
+    while preserving page order.
+    """
+    lowered = text
+    for needle, repl in _DEOBFUSCATE:
+        lowered = lowered.replace(needle, repl)
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in _EMAIL_RE.findall(lowered):
+        addr = raw.strip(".,;:'\"()<>[]").lower()
+        if _JUNK_EMAIL_RE.search(addr) or addr in seen or len(addr) > 254:
+            continue
+        seen.add(addr)
+        out.append(addr)
+    return out
+
+
+def _rank_emails(emails: list[str], text: str) -> list[str]:
+    """Order candidate addresses best-first for a one-click Select.
+
+    A corresponding-author address wins, then any address whose local part
+    looks like a person, then role desks like info@ or editorial@.
+    """
+
+    def score(addr: str) -> tuple[int, int]:
+        local = addr.split("@", 1)[0]
+        near = 0
+        idx = text.lower().find(addr)
+        if idx != -1 and _CORRESPONDING_RE.search(text[max(0, idx - 300) : idx]):
+            near = -2
+        role = 1 if local.split("+")[0] in _ROLE_LOCALPARTS else 0
+        return (near + role, emails.index(addr))
+
+    return sorted(emails, key=score)
+
+
+def _name_from_payload(payload: Any) -> str:
+    """Best-effort author name from an extract payload's metadata keys."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    for source in (data, payload):
+        if not isinstance(source, dict):
+            continue
+        for key in _AUTHOR_KEYS:
+            value = source.get(key)
+            if isinstance(value, list) and value:
+                value = value[0]
+            if isinstance(value, str) and 2 < len(value.strip()) <= 80:
+                return value.strip()
+    return ""
+
+
+def _name_from_email(addr: str) -> str:
+    """Derive a display name from an address local part, or "" if it is a desk.
+
+    `j.smith@ox.ac.uk` becomes "J Smith". Role mailboxes and opaque local
+    parts return "" rather than a guess -- an empty name field is honest, a
+    wrong one gets written into a real email.
+    """
+    local = addr.split("@", 1)[0]
+    if local in _ROLE_LOCALPARTS or any(c.isdigit() for c in local):
+        return ""
+    parts = [p for p in re.split(r"[._\-+]+", local) if p.isalpha()]
+    if len(parts) < 2:
+        return ""
+    return " ".join(p.capitalize() for p in parts)
+
+
+def resolve_contact(user_id: str, url: str) -> dict[str, Any]:
+    """Open one lead's page and pull a real contact address out of it.
+
+    Web search returns pages, not people, so the address a user needs lives in
+    the page body (a corresponding-author block, a faculty contact line) and
+    never in the search snippet. This fetches the page through Nimble Extract
+    on demand -- one lead, only when the user picks it -- and returns
+    {found, email, emails, name, reason}. `reason` is always user-facing text
+    when found is False, so the UI can say what to do next instead of showing
+    an empty field.
+    """
+    empty = {"found": False, "email": "", "emails": [], "name": "", "reason": ""}
+    if not url.startswith(("http://", "https://")):
+        return {**empty, "reason": "That lead has no page to open."}
+    if not nimble_client.is_configured():
+        return {
+            **empty,
+            "reason": (
+                "Contact discovery is not configured. Open the page and copy "
+                "the address in yourself."
+            ),
+        }
+    session_id = trace.new_session(user_id)
+    payload = nimble_client.extract(url, session_id)
+    if not payload:
+        return {
+            **empty,
+            "reason": (
+                "Could not open that page. Open it yourself and copy the "
+                "author's address in."
+            ),
+        }
+    text = payload if isinstance(payload, str) else json.dumps(payload)
+    emails = _rank_emails(_usable_emails(text), text)
+    if not emails:
+        return {
+            **empty,
+            "reason": (
+                "No public email address on that page. Open it and copy the "
+                "author's address in, or type a recipient yourself."
+            ),
+        }
+    best = emails[0]
+    return {
+        "found": True,
+        "email": best,
+        "emails": emails[:8],
+        "name": _name_from_payload(payload) or _name_from_email(best),
+        "reason": "",
+    }
 
 
 def list_outreach_log(

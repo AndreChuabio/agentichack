@@ -89,9 +89,15 @@ class OutreachLogRow(BaseModel):
 
 
 class PersonOut(BaseModel):
-    """A suggested person or organization to reach out to."""
+    """A lead page to reach through.
 
-    name: str
+    `title` is the page web search returned; `name` is a human, and stays
+    empty until a contact is resolved from the page. They are separate so the
+    UI can never write a page title into a recipient field.
+    """
+
+    name: str = ""
+    title: str = ""
     detail: str = ""
     url: str = ""
     email: str = ""
@@ -114,6 +120,26 @@ class PeopleRequest(BaseModel):
 
     purpose: str = Field(..., description="VISA, CAREER, NETWORK, BRAND, or SERVICE")
     context: str = Field("", description="Who/what you are reaching about")
+
+
+class ContactRequest(BaseModel):
+    """Request body for resolving one lead page into a contact address."""
+
+    url: str = Field(..., description="The lead page to open and read")
+
+
+class ContactOut(BaseModel):
+    """Contact resolved from a lead page.
+
+    reason is user-facing text whenever found is False, so the UI can tell the
+    caller what to do next instead of leaving the recipient field blank.
+    """
+
+    found: bool
+    email: str = ""
+    emails: list[str] = []
+    name: str = ""
+    reason: str = ""
 
 
 class SentRequest(BaseModel):
@@ -213,6 +239,13 @@ def suggest_people(
         people=[PersonOut(**p) for p in result["people"]],
         reason=result.get("reason", ""),
     )
+
+
+@router.post("/outreach/contact", response_model=ContactOut)
+def resolve_contact(body: ContactRequest, user: AuthUser = CurrentUser) -> ContactOut:
+    """Open one lead page and return the best contact address found on it."""
+    result = market_service.resolve_contact(user_id=user.id, url=body.url)
+    return ContactOut(**result)
 
 
 @router.post("/outreach/sent", status_code=status.HTTP_204_NO_CONTENT)

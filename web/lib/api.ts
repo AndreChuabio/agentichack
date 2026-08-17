@@ -17,6 +17,7 @@ import type {
   LiveUrlResponse,
   MeResponse,
   OutreachRow,
+  ContactResult,
   PeopleResponse,
   PluginResult,
   Profile,
@@ -624,6 +625,17 @@ export const api = {
       return requestJson<PeopleResponse>("/market/outreach/people", {
         method: "POST",
         body: { purpose, context },
+      });
+    },
+
+    /**
+     * Open one lead page and pull the best contact address off it. Search
+     * snippets never carry an email, so this is the only path that finds one.
+     */
+    async resolveContact(url: string): Promise<ContactResult> {
+      return requestJson<ContactResult>("/market/outreach/contact", {
+        method: "POST",
+        body: { url },
       });
     },
 

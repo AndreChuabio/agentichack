@@ -169,12 +169,25 @@ export interface OutreachRow {
   recipient_contact?: string;
 }
 
-/** A suggested person/lead to reach, from web search. */
+/** A lead page to reach through, from web search. */
 export interface PersonLead {
+  /** A human name. Empty until a contact is resolved from the page. */
   name: string;
+  /** The page title web search returned. Never a recipient name. */
+  title?: string;
   detail?: string;
   url?: string;
   email?: string;
+}
+
+/** Contact resolved by opening one lead page. */
+export interface ContactResult {
+  found: boolean;
+  email: string;
+  emails: string[];
+  name: string;
+  /** User-facing next step whenever found is false. */
+  reason: string;
 }
 
 export interface PeopleResponse {
